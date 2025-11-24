@@ -2,3 +2,4 @@ node_modules
 .jules
 .env
 dist
+output/

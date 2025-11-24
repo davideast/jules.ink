@@ -9,6 +9,7 @@
     "gen:assets": "tsx scripts/create-base-template.ts"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@napi-rs/canvas": "^0.1.44",
     "dotenv": "^16.4.5",
     "modjules": "^0.1.0",
