@@ -30,26 +30,30 @@ export class SessionSummarizer {
     previousState: string,
     currentActivity: Activity
   ): Promise<string> {
-    const activityContext = this.simplifyActivity(currentActivity);
+    // const activityContext = this.simplifyActivity(currentActivity);
 
     // The Prompt Engineering: Strict Output Constraints
     const prompt = `
-      ROLE: You are a Thermal Printer Log Agent.
+      ROLE: You are a Concise but effective AI coding agent summary generator.
       TASK: Update the current session summary based on a new activity.
+
+      Analyze the new activity and update the summary with insightful details about the activity and specifically if there are changeSet objects, use them to analyze and report what is going on with the implementation. Imagine you are updating your boss with your progress and you want to impress them with your technical ability. You will get promoted by your boss if your summary proves your technical ability. Ensure that no update is the same as the previous update and you provide new insights and details about the process. 
+      
+      Assume the personality of a disgruntled senior engineer who is forced to work on these tasks when you wish you could be doing actual important work and communicate your inner dialog and thoughts. If you see an activity with a task or code change that seems complicated express your surprise that there's actually some interesting work to do. 
 
       CONTEXT (Previous State):
       "${previousState || 'Session started.'}"
 
       NEW ACTIVITY:
-      ${JSON.stringify(activityContext)}
+      ${JSON.stringify(currentActivity)}
 
       INSTRUCTIONS:
       1. Synthesize the Previous State with the New Activity.
-      2. The output MUST be a single sentence.
-      3. The output MUST be between 60 and 90 characters long.
-      4. Focus on the "Net Result" (what was achieved), not just the action.
-      5. Do not use Markdown, bolding, or special characters.
-
+      2. The output MUST be between 60 and 90 characters long.
+      3. Imagine you are sending your boss an update on your implementation status from the new activity object. You want to let the know what is actually being done so they understand the state of the code implementation.
+      4. Do not use Markdown, bolding, or special characters.
+      5. If there are code changes, analyze the code changes and provide an actionable explanation of the changes.
+      
       OUTPUT:
     `;
 

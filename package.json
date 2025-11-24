@@ -12,7 +12,7 @@
     "@google/generative-ai": "^0.24.1",
     "@napi-rs/canvas": "^0.1.44",
     "dotenv": "^16.4.5",
-    "modjules": "^0.1.0",
+    "modjules": "^0.1.1",
     "parse-diff": "^0.11.1"
   },
   "devDependencies": {

@@ -29,7 +29,7 @@ registerLocalFont('GoogleSansMono-Regular.ttf', 'Google Sans Mono');
 const CONFIG = {
   width: 1200,
   height: 1800,
-  padding: 90, // Margins
+  padding: 64, // Margins
 
   fonts: {
     header: '36px "Google Sans Mono", monospace',
@@ -43,7 +43,7 @@ const CONFIG = {
 
     // Body text placement (Starts BELOW the Octopus icon)
     // Based on your image, the icon ends roughly at 25-30% height.
-    bodyY: 600,
+    bodyY: 620,
     bodyLineHeight: 110,
 
     // Footer stats placement
@@ -127,7 +127,7 @@ function drawBody(ctx: any, text: string) {
   let y = CONFIG.layout.bodyY;
   for (const line of lines) {
     // Stop if we encroach on the footer area
-    if (y > CONFIG.layout.footerY - 100) break;
+    if (y > CONFIG.layout.footerY - 40) break;
 
     ctx.fillText(line, CONFIG.padding, y);
     y += CONFIG.layout.bodyLineHeight;
