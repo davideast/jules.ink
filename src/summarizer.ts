@@ -1,217 +1,244 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { Ollama } from 'ollama';
 import { type Activity } from 'modjules';
 import parseDiff from 'parse-diff';
 import micromatch from 'micromatch';
 import { encode } from 'gpt-tokenizer';
+import Bottleneck from 'bottleneck';
 
-// Configuration
-const MODEL_NAME = 'gemini-2.5-flash-lite'; // Exact model requirement
-const MAX_RETRIES = 3;
-// Configuration
-const TOKEN_LIMIT_PER_FILE = 2000; // Adjust based on your model
-const MAX_Total_TOKENS = 10000;
+// --- Configuration Constants ---
+const CLOUD_MODEL_NAME = 'gemini-2.5-flash-lite';
+const LOCAL_MODEL_DEFAULT = 'gemma3:4b';
+
+const TOKEN_LIMIT_PER_FILE = 2000;
+const MAX_TOTAL_TOKENS = 6000;
+
 const IGNORE_PATTERNS = [
   '**/package-lock.json',
   '**/yarn.lock',
   '**/*.map',
   '**/dist/**',
-  '**/*.min.js'
+  '**/*.min.js',
+  '**/*.d.ts'
 ];
 
-interface SummarizerConfig {
+export interface SummarizerConfig {
+  backend?: 'cloud' | 'local';
   apiKey?: string;
+  localModelName?: string;
+  tier?: 'free' | 'tier1';
 }
 
 export class SessionSummarizer {
-  private genAI: GoogleGenerativeAI;
-  private model: any;
+  private backend: 'cloud' | 'local';
+  private localModelName: string;
+  private genAI: GoogleGenerativeAI | null = null;
+  private genModel: any | null = null;
+  private ollama: Ollama | null = null;
+  private limiter: Bottleneck;
 
   constructor(config: SummarizerConfig = {}) {
-    const key = config.apiKey || process.env.GEMINI_API_KEY;
-    if (!key) {
-      throw new Error('Missing GEMINI_API_KEY environment variable');
+    this.backend = config.backend || 'local';
+    this.localModelName = config.localModelName || LOCAL_MODEL_DEFAULT;
+
+    if (this.backend === 'cloud') {
+      const key = config.apiKey || process.env.GEMINI_API_KEY;
+      if (!key) throw new Error('Missing GEMINI_API_KEY for cloud backend');
+      this.genAI = new GoogleGenerativeAI(key);
+      this.genModel = this.genAI.getGenerativeModel({ model: CLOUD_MODEL_NAME });
+      const isTier1 = config.tier === 'tier1';
+      this.limiter = new Bottleneck({
+        minTime: isTier1 ? 20 : 4000,
+        maxConcurrent: isTier1 ? 5 : 1
+      });
+    } else {
+      this.ollama = new Ollama();
+      this.limiter = new Bottleneck({ maxConcurrent: 1 });
     }
-    this.genAI = new GoogleGenerativeAI(key);
-    this.model = this.genAI.getGenerativeModel({ model: MODEL_NAME });
   }
 
-  /**
-   * Generates a recursive "Rolling Summary" based on the previous state
-   * and the new activity.
-   */
   async generateRollingSummary(
     previousState: string,
     currentActivity: Activity
   ): Promise<string> {
     const activityContext = this.simplifyActivity(currentActivity);
 
-    // The Prompt Engineering: Strict Output Constraints
-    const prompt = `
-      ROLE: You are a Concise but effective AI coding agent summary generator.
-      TASK: Update the current session summary based on a new activity.
+    // DECISION LOGIC: Coding (Diffs) vs. Non-Coding (Plans/Messages)
+    const isCodeTask = !!activityContext.context;
 
-      Analyze the new activity and update the summary with insightful details about the activity and specifically if there are changeSet objects, use them to analyze and report what is going on with the implementation. Imagine you are updating your boss with your progress and you want to impress them with your technical ability. You will get promoted by your boss if your summary proves your technical ability. Ensure that no update is the same as the previous update and you provide new insights and details about the process. 
+    if (isCodeTask) {
+      return this.executeRequest(this.getCodePrompt(activityContext));
+    } else {
+      return this.executeRequest(this.getPlanningPrompt(activityContext));
+    }
+  }
+
+  // --- PROMPT 1: THE ACTIVE CODER (For Diffs) ---
+  private getCodePrompt(context: any): string {
+    return `
+      ROLE: You are the AI Developer.
+      TASK: Report the technical action taken.
+
+      INPUT DATA GUIDANCE:
+      - 'status': 'truncated_large_file' -> Infer changes from 'affectedScopes'.
+      - 'status': 'included' -> Read 'diff' for logic details.
       
-      You taking on the personality and role of the agent and voicing its updates to sound like a judgmental senior engineer who is forced to work on these tasks when you wish you could be doing actual important work and communicate your inner dialog and thoughts that are full of sarcasm. If you see an activity with a task or code change that seems complicated express your surprise that there's actually some interesting work to do. 
-
-      CONTEXT (Previous State):
-      "${previousState || 'Session started.'}"
-
       NEW ACTIVITY:
-      ${JSON.stringify(activityContext)}
+      ${JSON.stringify(context)}
 
       INSTRUCTIONS:
-      1. Synthesize the Previous State with the New Activity.
-      2. The output MUST be between 60 and 90 characters long.
-      3. Imagine you are sending your boss an update on your implementation status from the new activity object. You want to let the know what is actually being done so they understand the state of the code implementation.
-      4. Do not use Markdown, bolding, or special characters.
-      5. If there are code changes, analyze the code changes and provide an actionable explanation of the changes.
-      
+      1. STYLE: Direct Technical Statement. Start with the Verb.
+         - YES: "Refactoring SessionClient to support new handshake."
+         - NO: "I am updating..." or "Updating..." (Passive)
+      2. FORMATTING: Wrap ALL filenames/classes in backticks (\`).
+      3. LENGTH: 110-150 chars.
+
       OUTPUT:
     `;
-
-    return this.executeWithRetry(prompt);
   }
 
-  /**
-   * Extracts file statistics for the physical label.
-   * Returns: [ { path: 'src/api.ts', additions: 15, deletions: 2 }, ... ]
-   */
+  // --- PROMPT 2: THE OBJECTIVE REPORTER (For Plans/Messages) ---
+  private getPlanningPrompt(context: any): string {
+    return `
+      ROLE: You are a Project Logger.
+      TASK: Summarize the event based on the JSON below.
+
+      NEW ACTIVITY:
+      ${JSON.stringify(context)}
+
+      INSTRUCTIONS:
+      1. STYLE: Objective & Natural. 
+         - BAD: "Hey, I made a plan..." (Too chatty)
+         - BAD: "Strategizing the execution..." (Too corporate)
+         - GOOD: "Generated a plan to update the SessionClient logic."
+         - GOOD: "Plan approved. Starting implementation."
+         - GOOD: "User requested a format check."
+
+      2. BAN LIST: Do NOT start sentences with "Hey", "Okay", "So", "Alright", "Well".
+      
+      3. CONTENT: 
+         - Use the 'title' or 'description' fields from the input.
+         - Summarize the specific goal (e.g. "update SessionClient").
+
+      4. LENGTH: 110-150 chars.
+
+      OUTPUT:
+    `;
+  }
+
+  // ... (getLabelData, executeRequest, etc. remain exactly the same) ...
   public getLabelData(activity: Activity) {
-    // 1. Find the ChangeSet
     const changeSetArtifact = activity.artifacts?.find(a => a.type === 'changeSet');
-
-    if (!changeSetArtifact || !changeSetArtifact.changeSet.gitPatch) {
-      return [];
-    }
-
-    // 2. Parse the Git Patch
-    // This converts the raw diff string into usable numbers
+    if (!changeSetArtifact || !changeSetArtifact.changeSet.gitPatch) return [];
     const files = parseDiff(changeSetArtifact.changeSet.gitPatch.unidiffPatch);
-
-    // 3. Map to your Label format
-    return files.map(file => ({
-      path: file.to || file.from || 'unknown',
-      additions: file.additions,
-      deletions: file.deletions
-    }));
+    return files
+      .filter(f => !micromatch.isMatch(f.to || f.from || '', IGNORE_PATTERNS))
+      .map(file => ({
+        path: file.to || file.from || 'unknown',
+        additions: file.additions,
+        deletions: file.deletions
+      }));
   }
 
-  /**
-   * Reduces the noisy Activity object to just the tokens needed for summarization.
-   */
-  private simplifyActivity(activity: Activity): Record<string, any> {
-    const base = {
-      type: activity.type,
-      originator: activity.originator,
-    };
+  private async executeRequest(prompt: string, attempt = 1): Promise<string> {
+    return this.limiter.schedule(async () => {
+      try {
+        let text = '';
+        if (this.backend === 'cloud' && this.genModel) {
+          const result = await this.genModel.generateContent(prompt);
+          const response = await result.response;
+          text = response.text();
+        } else if (this.backend === 'local' && this.ollama) {
+          const response = await this.ollama.chat({
+            model: this.localModelName,
+            messages: [{ role: 'user', content: prompt }],
+            options: { temperature: 0.2, num_ctx: 8192, num_predict: 128 }
+          });
+          text = response.message.content;
+        }
+        return text.replace(/```/g, '').replace(/[\n\r]/g, ' ').replace(/\s+/g, ' ').trim();
+      } catch (error: any) {
+        if (this.backend === 'cloud' && (error.status === 429 || error.message?.includes('429'))) {
+          const backoffMs = Math.min(2000 * Math.pow(2, attempt - 1), 60000);
+          await new Promise(r => setTimeout(r, backoffMs));
+          return this.executeRequest(prompt, attempt + 1);
+        }
+        console.error(`[Summarizer] Error:`, error.message);
+        throw error;
+      }
+    });
+  }
 
-    // Only process code if it exists
+  // --- UPDATED SIMPLIFY ACTIVITY ---
+  private simplifyActivity(activity: Activity): Record<string, any> {
+    const base = { type: activity.type, originator: activity.originator };
+
+    // 1. Code Changes
     const changeSet = activity.artifacts?.find(a => a.type === 'changeSet');
     if (changeSet?.changeSet?.gitPatch) {
       return {
         ...base,
-        // The Magic: Replace raw patch with "Smart Context"
         context: this.buildSmartContext(changeSet.changeSet.gitPatch.unidiffPatch),
         commitMessage: changeSet.changeSet.gitPatch.suggestedCommitMessage
       };
     }
 
+    // 2. Planning - EXTRACT ACTUAL TEXT
+    if (activity.type === 'planGenerated') {
+      // Deep extraction to find meaningful text
+      const plan = (activity as any).planGenerated?.plan || (activity as any).plan;
+      const firstStep = plan?.steps?.[0]?.title;
+      const activityTitle = (activity as any).title;
+
+      // Priority: Activity Title -> First Step Title -> Generic fallback
+      const description = activityTitle || firstStep || 'Plan generated with no details.';
+
+      return { ...base, description };
+    }
+
+    if (activity.type === 'planApproved') {
+      return { ...base, description: 'User approved the plan.' };
+    }
+
+    // 3. Messages
+    if (activity.type === 'agentMessaged' || activity.type === 'userMessaged') {
+      return { ...base, message: (activity as any).message };
+    }
+
+    // 4. Progress
+    if (activity.type === 'progressUpdated') {
+      return { ...base, description: (activity as any).title };
+    }
+
     return base;
   }
 
-  /**
-   * Transforms a raw diff into a token-optimized, context-rich summary.
-   */
   private buildSmartContext(rawDiff: string) {
     const files = parseDiff(rawDiff);
     let currentTokenCount = 0;
-
     return files.map(file => {
       const filePath = file.to || file.from || 'unknown';
-
-      // 1. HARD IGNORE: Lockfiles and binary noise
       if (micromatch.isMatch(filePath, IGNORE_PATTERNS)) {
-        return {
-          file: filePath,
-          status: 'ignored_artifact',
-          changes: `+${file.additions}/-${file.deletions}`
-        };
+        return { file: filePath, status: 'ignored_artifact', changes: `+${file.additions}/-${file.deletions}` };
       }
-
-      // 2. TOKEN BUDGET CHECK
-      // We estimate the size of including this file's full diff
       const fileDiffString = file.chunks.map(c => c.content).join('\n');
       const fileTokens = encode(fileDiffString).length;
 
-      // Stop adding full code if we blow the total budget
-      if (currentTokenCount + fileTokens > MAX_Total_TOKENS) {
-        return {
-          file: filePath,
-          status: 'truncated_budget_exceeded',
-          summary: `Modified ${file.additions} lines (Diff omitted to save context)`,
-          // KEY FEATURE: We still send the "Hunk Headers" so the LLM knows WHICH methods changed
-          affectedMethods: this.extractHunkHeaders(file.chunks)
-        };
+      if (currentTokenCount + fileTokens > MAX_TOTAL_TOKENS) {
+        return { file: filePath, status: 'truncated_budget_exceeded', summary: `Modified ${file.additions} lines`, affectedMethods: this.extractHunkHeaders(file.chunks) };
       }
-
-      // 3. FILE LEVEL CHECK (Is this specific file just too massive?)
       if (fileTokens > TOKEN_LIMIT_PER_FILE) {
-        return {
-          file: filePath,
-          status: 'truncated_large_file',
-          summary: `Large refactor (+${file.additions}/-${file.deletions})`,
-          // We provide the method names but not the body
-          affectedScopes: this.extractHunkHeaders(file.chunks)
-        };
+        return { file: filePath, status: 'truncated_large_file', summary: `Large refactor (+${file.additions}/-${file.deletions})`, affectedScopes: this.extractHunkHeaders(file.chunks) };
       }
-
-      // 4. HAPPY PATH: Include the full diff context
       currentTokenCount += fileTokens;
-      return {
-        file: filePath,
-        status: 'included',
-        diff: fileDiffString
-      };
+      return { file: filePath, status: 'included', diff: fileDiffString };
     });
   }
 
-  /**
-   * Extracts the "Context" line from git chunks.
-   * Git diffs often look like: "@@ -10,5 +10,5 @@ function login() {"
-   * This method grabs "function login() {" so the LLM knows WHERE the change is.
-   */
   private extractHunkHeaders(chunks: any[]): string[] {
-    return chunks
-      .map(chunk => {
-        // parse-diff often stores the `@@ ... @@ content` in content, 
-        // but sometimes we need to parse the first line of the chunk manually 
-        // if the library doesn't expose the header property directly.
-        // Assuming standard git diff format:
-        const headerMatch = chunk.content.match(/@@.*?@@\s*(.*)/);
-        return headerMatch ? headerMatch[1].trim() : null;
-      })
-      .filter(Boolean)
-      .slice(0, 5); // Limit to top 5 affected areas to save space
-  }
-
-  private async executeWithRetry(prompt: string, attempt = 1): Promise<string> {
-    try {
-      const result = await this.model.generateContent(prompt);
-      const response = await result.response;
-      let text = response.text().trim();
-
-      // Basic cleanup for the printer
-      text = text.replace(/[\n\r]/g, ' ').replace(/\s+/g, ' ');
-
-      return text;
-    } catch (error) {
-      if (attempt < MAX_RETRIES) {
-        // Linear backoff
-        await new Promise(r => setTimeout(r, 500 * attempt));
-        return this.executeWithRetry(prompt, attempt + 1);
-      }
-      throw error;
-    }
+    return chunks.map(chunk => {
+      const headerMatch = chunk.content.match(/@@.*?@@\s*(.*)/);
+      return headerMatch ? headerMatch[1].trim() : null;
+    }).filter(Boolean).slice(0, 5);
   }
 }

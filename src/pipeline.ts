@@ -1,13 +1,16 @@
 import { jules } from 'modjules';
 import { SessionSummarizer } from './summarizer.js';
 import { analyzeChangeSet } from './analyzer.js';
-import { generateLabel, LabelData } from './label-generator.js'; // Ensure LabelData is imported
+import { generateLabel, LabelData } from './label-generator.js';
 import fs from 'fs';
 import path from 'path';
 
 export async function* processSessionAndPrint(sessionId: string) {
   // Initialize the Smart Summarizer we built previously
-  const summarizer = new SessionSummarizer();
+  const summarizer = new SessionSummarizer({
+    backend: 'cloud',
+    apiKey: process.env.GEMINI_API_KEY
+  });
   let rollingSummary = "";
 
   const session = jules.session(sessionId);
