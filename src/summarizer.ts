@@ -1,9 +1,22 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { type Activity } from 'modjules';
+import parseDiff from 'parse-diff';
+import micromatch from 'micromatch';
+import { encode } from 'gpt-tokenizer';
 
 // Configuration
 const MODEL_NAME = 'gemini-2.5-flash-lite'; // Exact model requirement
 const MAX_RETRIES = 3;
+// Configuration
+const TOKEN_LIMIT_PER_FILE = 2000; // Adjust based on your model
+const MAX_Total_TOKENS = 10000;
+const IGNORE_PATTERNS = [
+  '**/package-lock.json',
+  '**/yarn.lock',
+  '**/*.map',
+  '**/dist/**',
+  '**/*.min.js'
+];
 
 interface SummarizerConfig {
   apiKey?: string;
@@ -30,7 +43,7 @@ export class SessionSummarizer {
     previousState: string,
     currentActivity: Activity
   ): Promise<string> {
-    // const activityContext = this.simplifyActivity(currentActivity);
+    const activityContext = this.simplifyActivity(currentActivity);
 
     // The Prompt Engineering: Strict Output Constraints
     const prompt = `
@@ -39,13 +52,13 @@ export class SessionSummarizer {
 
       Analyze the new activity and update the summary with insightful details about the activity and specifically if there are changeSet objects, use them to analyze and report what is going on with the implementation. Imagine you are updating your boss with your progress and you want to impress them with your technical ability. You will get promoted by your boss if your summary proves your technical ability. Ensure that no update is the same as the previous update and you provide new insights and details about the process. 
       
-      Assume the personality of a disgruntled senior engineer who is forced to work on these tasks when you wish you could be doing actual important work and communicate your inner dialog and thoughts. If you see an activity with a task or code change that seems complicated express your surprise that there's actually some interesting work to do. 
+      You taking on the personality and role of the agent and voicing its updates to sound like a judgmental senior engineer who is forced to work on these tasks when you wish you could be doing actual important work and communicate your inner dialog and thoughts that are full of sarcasm. If you see an activity with a task or code change that seems complicated express your surprise that there's actually some interesting work to do. 
 
       CONTEXT (Previous State):
       "${previousState || 'Session started.'}"
 
       NEW ACTIVITY:
-      ${JSON.stringify(currentActivity)}
+      ${JSON.stringify(activityContext)}
 
       INSTRUCTIONS:
       1. Synthesize the Previous State with the New Activity.
@@ -61,33 +74,125 @@ export class SessionSummarizer {
   }
 
   /**
+   * Extracts file statistics for the physical label.
+   * Returns: [ { path: 'src/api.ts', additions: 15, deletions: 2 }, ... ]
+   */
+  public getLabelData(activity: Activity) {
+    // 1. Find the ChangeSet
+    const changeSetArtifact = activity.artifacts?.find(a => a.type === 'changeSet');
+
+    if (!changeSetArtifact || !changeSetArtifact.changeSet.gitPatch) {
+      return [];
+    }
+
+    // 2. Parse the Git Patch
+    // This converts the raw diff string into usable numbers
+    const files = parseDiff(changeSetArtifact.changeSet.gitPatch.unidiffPatch);
+
+    // 3. Map to your Label format
+    return files.map(file => ({
+      path: file.to || file.from || 'unknown',
+      additions: file.additions,
+      deletions: file.deletions
+    }));
+  }
+
+  /**
    * Reduces the noisy Activity object to just the tokens needed for summarization.
    */
   private simplifyActivity(activity: Activity): Record<string, any> {
-    const base: Record<string, any> = {
+    const base = {
       type: activity.type,
       originator: activity.originator,
     };
 
-    if (activity.planGenerated?.plan?.steps) {
-      return { ...base, planTitle: activity.planGenerated.plan.steps[0]?.title || 'New Plan' };
-    }
-
-    if (activity.progressUpdated) {
-      return { ...base, update: activity.progressUpdated.title };
-    }
-
-    if (activity.artifacts) {
-      // Find a changeSet if it exists
-      const changeSet = activity.artifacts.find(a => a.type === 'changeSet');
-      if (changeSet) {
-        // We don't send the whole diff, just the file names or the commit message idea
-        // Parsing the raw diff here to just get the 'intent' saves tokens.
-        return { ...base, hasCodeChanges: true };
-      }
+    // Only process code if it exists
+    const changeSet = activity.artifacts?.find(a => a.type === 'changeSet');
+    if (changeSet?.changeSet?.gitPatch) {
+      return {
+        ...base,
+        // The Magic: Replace raw patch with "Smart Context"
+        context: this.buildSmartContext(changeSet.changeSet.gitPatch.unidiffPatch),
+        commitMessage: changeSet.changeSet.gitPatch.suggestedCommitMessage
+      };
     }
 
     return base;
+  }
+
+  /**
+   * Transforms a raw diff into a token-optimized, context-rich summary.
+   */
+  private buildSmartContext(rawDiff: string) {
+    const files = parseDiff(rawDiff);
+    let currentTokenCount = 0;
+
+    return files.map(file => {
+      const filePath = file.to || file.from || 'unknown';
+
+      // 1. HARD IGNORE: Lockfiles and binary noise
+      if (micromatch.isMatch(filePath, IGNORE_PATTERNS)) {
+        return {
+          file: filePath,
+          status: 'ignored_artifact',
+          changes: `+${file.additions}/-${file.deletions}`
+        };
+      }
+
+      // 2. TOKEN BUDGET CHECK
+      // We estimate the size of including this file's full diff
+      const fileDiffString = file.chunks.map(c => c.content).join('\n');
+      const fileTokens = encode(fileDiffString).length;
+
+      // Stop adding full code if we blow the total budget
+      if (currentTokenCount + fileTokens > MAX_Total_TOKENS) {
+        return {
+          file: filePath,
+          status: 'truncated_budget_exceeded',
+          summary: `Modified ${file.additions} lines (Diff omitted to save context)`,
+          // KEY FEATURE: We still send the "Hunk Headers" so the LLM knows WHICH methods changed
+          affectedMethods: this.extractHunkHeaders(file.chunks)
+        };
+      }
+
+      // 3. FILE LEVEL CHECK (Is this specific file just too massive?)
+      if (fileTokens > TOKEN_LIMIT_PER_FILE) {
+        return {
+          file: filePath,
+          status: 'truncated_large_file',
+          summary: `Large refactor (+${file.additions}/-${file.deletions})`,
+          // We provide the method names but not the body
+          affectedScopes: this.extractHunkHeaders(file.chunks)
+        };
+      }
+
+      // 4. HAPPY PATH: Include the full diff context
+      currentTokenCount += fileTokens;
+      return {
+        file: filePath,
+        status: 'included',
+        diff: fileDiffString
+      };
+    });
+  }
+
+  /**
+   * Extracts the "Context" line from git chunks.
+   * Git diffs often look like: "@@ -10,5 +10,5 @@ function login() {"
+   * This method grabs "function login() {" so the LLM knows WHERE the change is.
+   */
+  private extractHunkHeaders(chunks: any[]): string[] {
+    return chunks
+      .map(chunk => {
+        // parse-diff often stores the `@@ ... @@ content` in content, 
+        // but sometimes we need to parse the first line of the chunk manually 
+        // if the library doesn't expose the header property directly.
+        // Assuming standard git diff format:
+        const headerMatch = chunk.content.match(/@@.*?@@\s*(.*)/);
+        return headerMatch ? headerMatch[1].trim() : null;
+      })
+      .filter(Boolean)
+      .slice(0, 5); // Limit to top 5 affected areas to save space
   }
 
   private async executeWithRetry(prompt: string, attempt = 1): Promise<string> {

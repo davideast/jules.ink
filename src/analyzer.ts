@@ -1,20 +1,24 @@
 import parseDiff from 'parse-diff';
+import micromatch from 'micromatch';
 import { ChangeSetSummary, FileImpact } from './types.js';
 
-export const BLOCK_FULL = '█';
-export const BLOCK_LIGHT = '░';
-
-interface AnalyzerOptions {
-  maxGraphWidth?: number;
-}
+// 1. Define the same Ignore Patterns used in your Summarizer
+const IGNORE_PATTERNS = [
+  '**/package-lock.json',
+  '**/yarn.lock',
+  '**/*.map',
+  '**/dist/**',
+  '**/*.min.js',
+  '**/.DS_Store'
+];
 
 /**
- * Transforms a raw Unidiff string into a structured ChangeSetSummary.
+ * Transforms a raw Unidiff string into structured stats,
+ * filtering out noise to match the Summarizer's logic.
  */
-export function analyzeChangeSet(unidiffPatch: string, options: AnalyzerOptions = {}): ChangeSetSummary {
-  const { maxGraphWidth = 10 } = options;
+export function analyzeChangeSet(unidiffPatch: string): ChangeSetSummary {
 
-  // parse-diff handles the heavy lifting of parsing the git format
+  // parse-diff handles the heavy lifting
   const parsedFiles = parseDiff(unidiffPatch);
 
   const files: FileImpact[] = [];
@@ -22,45 +26,42 @@ export function analyzeChangeSet(unidiffPatch: string, options: AnalyzerOptions 
   let totalDeletions = 0;
 
   for (const file of parsedFiles) {
+    // Prioritize 'to' path (new file), fallback to 'from' (deleted file)
+    const path = file.to || file.from || 'unknown';
+
+    // 2. APPLY FILTER LOGIC (Match simplifyActivity)
+    // If it's a lockfile or noise, skip it completely. 
+    // We don't want these taking up space on the physical label.
+    if (micromatch.isMatch(path, IGNORE_PATTERNS)) {
+      continue;
+    }
+
     // Handle binary files or renames where stats might be ambiguous
     const additions = file.additions || 0;
     const deletions = file.deletions || 0;
-    const totalChanges = additions + deletions;
-
-    // Prioritize 'to' path (new file), fallback to 'from' (deleted file)
-    const path = file.to || file.from || 'unknown';
 
     totalInsertions += additions;
     totalDeletions += deletions;
 
-    // Calculate Visual Graph
-    let graph = '';
-    if (totalChanges > 0) {
-      // If total changes are less than width, show exact representation
-      // Otherwise, normalize to max width
-      const graphLen = Math.min(totalChanges, maxGraphWidth);
-
-      const addRatio = additions / totalChanges;
-      const addChars = Math.round(graphLen * addRatio);
-      const delChars = graphLen - addChars;
-
-      graph = BLOCK_FULL.repeat(addChars) + BLOCK_LIGHT.repeat(delChars);
-    }
-
+    // 3. REMOVED GRAPH LOGIC
+    // We no longer calculate block chars. We just pass the raw stats.
     files.push({
       path,
       additions,
       deletions,
-      totalChanges,
-      graph
+      totalChanges: additions + deletions
     });
   }
+
+  // Sort files by "impact" (most changes first) so the label shows the important stuff
+  files.sort((a, b) => b.totalChanges - a.totalChanges);
 
   return {
     files,
     totalFiles: files.length,
     totalInsertions,
     totalDeletions,
-    summaryString: `${files.length} files changed, ${totalInsertions} insertions(+), ${totalDeletions} deletions(-)`
+    // Updated summary string to match the new numeric style
+    summaryString: `${files.length} files | +${totalInsertions} / -${totalDeletions}`
   };
 }

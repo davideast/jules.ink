@@ -6,11 +6,6 @@ export interface FileImpact {
   additions: number;
   deletions: number;
   totalChanges: number;
-  /**
-   * A visual representation of the churn (e.g., "████░").
-   * Visual scaling is handled by the analyzer.
-   */
-  graph: string;
 }
 
 /**
