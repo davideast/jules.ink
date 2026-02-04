@@ -33,19 +33,27 @@ const TONE_MODIFIERS: Record<TonePreset, string> = {
   noir: 'Write in the style of a 1940s noir detective narration. Dark, moody, metaphorical.',
 };
 
+/** Resolves a tone string to its modifier. Accepts preset names or custom instructions. */
+function resolveToneModifier(tone: string | undefined): string {
+  if (!tone || tone === 'professional') return '';
+  if (tone in TONE_MODIFIERS) return TONE_MODIFIERS[tone as TonePreset];
+  // Treat as custom tone instruction
+  return tone;
+}
+
 export interface SummarizerConfig {
   backend?: 'cloud' | 'local';
   apiKey?: string;
   localModelName?: string;
   cloudModelName?: string;
-  tone?: TonePreset;
+  tone?: string;
   tier?: 'free' | 'tier1';
 }
 
 export class SessionSummarizer {
   private backend: 'cloud' | 'local';
   private localModelName: string;
-  private tone: TonePreset;
+  private toneModifier: string;
   private genAI: GoogleGenAI | null = null;
   private genModel: any | null = null;
   private ollama: Ollama | null = null;
@@ -54,7 +62,7 @@ export class SessionSummarizer {
   constructor(config: SummarizerConfig = {}) {
     this.backend = config.backend || 'local';
     this.localModelName = config.localModelName || LOCAL_MODEL_DEFAULT;
-    this.tone = config.tone || 'professional';
+    this.toneModifier = resolveToneModifier(config.tone);
 
     if (this.backend === 'cloud') {
       const key = config.apiKey || process.env.GEMINI_API_KEY;
@@ -90,8 +98,7 @@ export class SessionSummarizer {
 
   // --- PROMPT 1: THE ACTIVE CODER (For Diffs) ---
   private getCodePrompt(context: any): string {
-    const toneModifier = TONE_MODIFIERS[this.tone];
-    const toneInstruction = toneModifier ? `\n      4. TONE: ${toneModifier}` : '';
+    const toneInstruction = this.toneModifier ? `\n      4. TONE: ${this.toneModifier}` : '';
 
     return `
       ROLE: You are the AI Developer.
@@ -117,8 +124,7 @@ export class SessionSummarizer {
 
   // --- PROMPT 2: THE OBJECTIVE REPORTER (For Plans/Messages) ---
   private getPlanningPrompt(context: any): string {
-    const toneModifier = TONE_MODIFIERS[this.tone];
-    const toneInstruction = toneModifier ? `\n      5. TONE: ${toneModifier}` : '';
+    const toneInstruction = this.toneModifier ? `\n      5. TONE: ${this.toneModifier}` : '';
 
     return `
       ROLE: You are a Project Logger.
