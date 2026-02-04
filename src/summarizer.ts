@@ -26,6 +26,7 @@ export interface SummarizerConfig {
   backend?: 'cloud' | 'local';
   apiKey?: string;
   localModelName?: string;
+  cloudModelName?: string;
   tier?: 'free' | 'tier1';
 }
 
@@ -45,7 +46,7 @@ export class SessionSummarizer {
       const key = config.apiKey || process.env.GEMINI_API_KEY;
       if (!key) throw new Error('Missing GEMINI_API_KEY for cloud backend');
       this.genAI = new GoogleGenAI({ apiKey: key });
-      this.genModel = CLOUD_MODEL_NAME;
+      this.genModel = config.cloudModelName || CLOUD_MODEL_NAME;
       const isTier1 = config.tier === 'tier1';
       this.limiter = new Bottleneck({
         minTime: isTier1 ? 20 : 4000,

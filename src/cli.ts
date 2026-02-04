@@ -13,14 +13,17 @@ program
   .command('process')
   .description('Process a Jules session and generate labels')
   .requiredOption('-s, --session <id>', 'The Session ID to process')
+  .option('-m, --model <name>', 'Gemini model to use for summarization', 'gemini-2.5-flash-lite')
   .action(async (options) => {
     const sessionId = options.session;
+    const model = options.model;
 
     console.log(`\n🚀 Starting Label Pipeline for Session: ${sessionId}`);
+    console.log(`📦 Using model: ${model}`);
     console.log(`===================================================\n`);
 
     try {
-      const generator = processSessionAndPrint(sessionId);
+      const generator = processSessionAndPrint(sessionId, { model });
 
       for await (const result of generator) {
         console.log(`✓ [${result.activity.type}] Processed`);

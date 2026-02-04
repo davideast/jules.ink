@@ -7,7 +7,11 @@ import thermal from './print.js';
 
 const TARGET_PRINTER = 'PM-241-BT';
 
-export async function* processSessionAndPrint(sessionId: string) {
+export interface ProcessOptions {
+  model?: string;
+}
+
+export async function* processSessionAndPrint(sessionId: string, options: ProcessOptions = {}) {
   // 1. Initialize Printer Hardware
   const hw = thermal();
 
@@ -26,6 +30,7 @@ export async function* processSessionAndPrint(sessionId: string) {
   const summarizer = new SessionSummarizer({
     backend: 'cloud',
     apiKey: process.env.GEMINI_API_KEY,
+    cloudModelName: options.model,
   });
   let rollingSummary = "";
 
