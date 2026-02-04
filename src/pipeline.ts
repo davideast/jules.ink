@@ -9,6 +9,7 @@ const TARGET_PRINTER = 'PM-241-BT';
 
 export interface ProcessOptions {
   model?: string;
+  tone?: string;
 }
 
 export async function* processSessionAndPrint(sessionId: string, options: ProcessOptions = {}) {
@@ -31,6 +32,7 @@ export async function* processSessionAndPrint(sessionId: string, options: Proces
     backend: 'cloud',
     apiKey: process.env.GEMINI_API_KEY,
     cloudModelName: options.model,
+    tone: options.tone as any,
   });
   let rollingSummary = "";
 

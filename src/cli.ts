@@ -14,16 +14,19 @@ program
   .description('Process a Jules session and generate labels')
   .requiredOption('-s, --session <id>', 'The Session ID to process')
   .option('-m, --model <name>', 'Gemini model to use for summarization', 'gemini-2.5-flash-lite')
+  .option('-t, --tone <preset>', 'Tone preset for summaries (professional, pirate, shakespearean, excited, haiku, noir)', 'professional')
   .action(async (options) => {
     const sessionId = options.session;
     const model = options.model;
+    const tone = options.tone;
 
     console.log(`\n🚀 Starting Label Pipeline for Session: ${sessionId}`);
     console.log(`📦 Using model: ${model}`);
+    console.log(`🎭 Tone: ${tone}`);
     console.log(`===================================================\n`);
 
     try {
-      const generator = processSessionAndPrint(sessionId, { model });
+      const generator = processSessionAndPrint(sessionId, { model, tone });
 
       for await (const result of generator) {
         console.log(`✓ [${result.activity.type}] Processed`);

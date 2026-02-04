@@ -22,17 +22,30 @@ const IGNORE_PATTERNS = [
   '**/*.d.ts'
 ];
 
+export type TonePreset = 'professional' | 'pirate' | 'shakespearean' | 'excited' | 'haiku' | 'noir';
+
+const TONE_MODIFIERS: Record<TonePreset, string> = {
+  professional: '',
+  pirate: 'Write in the style of a pirate. Use nautical terms and pirate slang like "arr", "matey", "ye", "be", etc.',
+  shakespearean: 'Write in Shakespearean English with dramatic flair. Use "doth", "hark", "forsooth", "verily", etc.',
+  excited: 'Write with EXTREME enthusiasm!!! Use exclamation marks and emojis like 🎉🚀✨💥!',
+  haiku: 'Format your response as a haiku (5-7-5 syllable structure). Be poetic and zen.',
+  noir: 'Write in the style of a 1940s noir detective narration. Dark, moody, metaphorical.',
+};
+
 export interface SummarizerConfig {
   backend?: 'cloud' | 'local';
   apiKey?: string;
   localModelName?: string;
   cloudModelName?: string;
+  tone?: TonePreset;
   tier?: 'free' | 'tier1';
 }
 
 export class SessionSummarizer {
   private backend: 'cloud' | 'local';
   private localModelName: string;
+  private tone: TonePreset;
   private genAI: GoogleGenAI | null = null;
   private genModel: any | null = null;
   private ollama: Ollama | null = null;
@@ -41,6 +54,7 @@ export class SessionSummarizer {
   constructor(config: SummarizerConfig = {}) {
     this.backend = config.backend || 'local';
     this.localModelName = config.localModelName || LOCAL_MODEL_DEFAULT;
+    this.tone = config.tone || 'professional';
 
     if (this.backend === 'cloud') {
       const key = config.apiKey || process.env.GEMINI_API_KEY;
@@ -76,6 +90,9 @@ export class SessionSummarizer {
 
   // --- PROMPT 1: THE ACTIVE CODER (For Diffs) ---
   private getCodePrompt(context: any): string {
+    const toneModifier = TONE_MODIFIERS[this.tone];
+    const toneInstruction = toneModifier ? `\n      4. TONE: ${toneModifier}` : '';
+
     return `
       ROLE: You are the AI Developer.
       TASK: Report the technical action taken.
@@ -92,7 +109,7 @@ export class SessionSummarizer {
          - YES: "Refactoring SessionClient to support new handshake."
          - NO: "I am updating..." or "Updating..." (Passive)
       2. FORMATTING: Wrap ALL filenames/classes in backticks (\`).
-      3. LENGTH: 110-150 chars.
+      3. LENGTH: 110-150 chars.${toneInstruction}
 
       OUTPUT:
     `;
@@ -100,6 +117,9 @@ export class SessionSummarizer {
 
   // --- PROMPT 2: THE OBJECTIVE REPORTER (For Plans/Messages) ---
   private getPlanningPrompt(context: any): string {
+    const toneModifier = TONE_MODIFIERS[this.tone];
+    const toneInstruction = toneModifier ? `\n      5. TONE: ${toneModifier}` : '';
+
     return `
       ROLE: You are a Project Logger.
       TASK: Summarize the event based on the JSON below.
@@ -121,7 +141,7 @@ export class SessionSummarizer {
          - Use the 'title' or 'description' fields from the input.
          - Summarize the specific goal (e.g. "update SessionClient").
 
-      4. LENGTH: 110-150 chars.
+      4. LENGTH: 110-150 chars.${toneInstruction}
 
       OUTPUT:
     `;
