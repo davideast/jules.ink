@@ -1,4 +1,4 @@
-import { jules } from 'modjules';
+import { jules } from '@google/jules-sdk';
 import { SessionSummarizer } from './summarizer.js';
 import { generateLabel, LabelData } from './label-generator.js';
 import fs from 'fs';
@@ -48,7 +48,7 @@ export async function* processSessionAndPrint(sessionId: string) {
 
     // 3. Generate Label Image
     const labelData: LabelData = {
-      repo: 'davideast/modjules',
+      repo: 'davideast/jules.ink',
       sessionId: sessionId,
       summary: rollingSummary,
       files: filesForLabel

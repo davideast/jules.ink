@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { cors } from 'hono/cors';
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import thermal from './print.js';
 
 const app = new Hono();
@@ -18,7 +18,11 @@ process.on('SIGINT', () => {
   process.exit();
 });
 
-const ai = new GoogleGenerativeAI(process.env["GEMINI_API_KEY"]);
+const apiKey = process.env["GEMINI_API_KEY"];
+if (!apiKey) {
+  throw new Error("GEMINI_API_KEY environment variable is required");
+}
+const ai = new GoogleGenAI({ apiKey });
 
 const model = "imagen-4.0-generate-001";
 

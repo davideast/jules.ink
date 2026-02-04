@@ -9,16 +9,17 @@
     "gen:assets": "tsx scripts/create-base-template.ts"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
+    "@google/genai": "^1.39.0",
+    "@google/jules-sdk": "^0.0.4",
     "@hono/node-server": "^1.19.6",
     "@napi-rs/canvas": "^0.1.44",
     "@types/micromatch": "^4.0.10",
     "bottleneck": "^2.19.5",
+    "commander": "^14.0.3",
     "dotenv": "^16.4.5",
     "gpt-tokenizer": "^3.4.0",
     "hono": "^4.10.6",
     "micromatch": "^4.0.8",
-    "modjules": "^0.1.1",
     "ollama": "^0.6.3",
     "parse-diff": "^0.11.1"
   },

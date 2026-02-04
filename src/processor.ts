@@ -1,4 +1,4 @@
-import { jules, type Activity } from 'modjules';
+import { jules, type Activity } from '@google/jules-sdk';
 import { analyzeChangeSet } from './analyzer.js';
 import { ChangeSetSummary } from './types.js';
 
@@ -36,8 +36,8 @@ export async function* streamChangeMetrics(
     // We look for specific artifact types in the activity
     const changeSetArtifact = activity.artifacts?.find(a => a.type === 'changeSet');
 
-    if (changeSetArtifact && changeSetArtifact.changeSet?.gitPatch?.unidiffPatch) {
-      const rawPatch = changeSetArtifact.changeSet.gitPatch.unidiffPatch;
+    if (changeSetArtifact && changeSetArtifact.gitPatch?.unidiffPatch) {
+      const rawPatch = changeSetArtifact.gitPatch.unidiffPatch;
 
       const summary = analyzeChangeSet(rawPatch);
 

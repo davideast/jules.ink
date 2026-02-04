@@ -1,6 +1,6 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { Ollama } from 'ollama';
-import { type Activity } from 'modjules';
+import { type Activity } from '@google/jules-sdk';
 import parseDiff from 'parse-diff';
 import micromatch from 'micromatch';
 import { encode } from 'gpt-tokenizer';
@@ -32,7 +32,7 @@ export interface SummarizerConfig {
 export class SessionSummarizer {
   private backend: 'cloud' | 'local';
   private localModelName: string;
-  private genAI: GoogleGenerativeAI | null = null;
+  private genAI: GoogleGenAI | null = null;
   private genModel: any | null = null;
   private ollama: Ollama | null = null;
   private limiter: Bottleneck;
@@ -44,8 +44,8 @@ export class SessionSummarizer {
     if (this.backend === 'cloud') {
       const key = config.apiKey || process.env.GEMINI_API_KEY;
       if (!key) throw new Error('Missing GEMINI_API_KEY for cloud backend');
-      this.genAI = new GoogleGenerativeAI(key);
-      this.genModel = this.genAI.getGenerativeModel({ model: CLOUD_MODEL_NAME });
+      this.genAI = new GoogleGenAI({ apiKey: key });
+      this.genModel = CLOUD_MODEL_NAME;
       const isTier1 = config.tier === 'tier1';
       this.limiter = new Bottleneck({
         minTime: isTier1 ? 20 : 4000,
@@ -129,8 +129,8 @@ export class SessionSummarizer {
   // ... (getLabelData, executeRequest, etc. remain exactly the same) ...
   public getLabelData(activity: Activity) {
     const changeSetArtifact = activity.artifacts?.find(a => a.type === 'changeSet');
-    if (!changeSetArtifact || !changeSetArtifact.changeSet.gitPatch) return [];
-    const files = parseDiff(changeSetArtifact.changeSet.gitPatch.unidiffPatch);
+    if (!changeSetArtifact || changeSetArtifact.type !== 'changeSet' || !changeSetArtifact.gitPatch) return [];
+    const files = parseDiff(changeSetArtifact.gitPatch.unidiffPatch);
     return files
       .filter(f => !micromatch.isMatch(f.to || f.from || '', IGNORE_PATTERNS))
       .map(file => ({
@@ -144,10 +144,12 @@ export class SessionSummarizer {
     return this.limiter.schedule(async () => {
       try {
         let text = '';
-        if (this.backend === 'cloud' && this.genModel) {
-          const result = await this.genModel.generateContent(prompt);
-          const response = await result.response;
-          text = response.text();
+        if (this.backend === 'cloud' && this.genAI) {
+          const result = await this.genAI.models.generateContent({
+            model: this.genModel,
+            contents: prompt,
+          });
+          text = result.text || '';
         } else if (this.backend === 'local' && this.ollama) {
           const response = await this.ollama.chat({
             model: this.localModelName,
@@ -175,11 +177,11 @@ export class SessionSummarizer {
 
     // 1. Code Changes
     const changeSet = activity.artifacts?.find(a => a.type === 'changeSet');
-    if (changeSet?.changeSet?.gitPatch) {
+    if (changeSet && changeSet.type === 'changeSet' && changeSet.gitPatch) {
       return {
         ...base,
-        context: this.buildSmartContext(changeSet.changeSet.gitPatch.unidiffPatch),
-        commitMessage: changeSet.changeSet.gitPatch.suggestedCommitMessage
+        context: this.buildSmartContext(changeSet.gitPatch.unidiffPatch),
+        commitMessage: changeSet.gitPatch.suggestedCommitMessage
       };
     }
 
