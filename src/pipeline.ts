@@ -3,29 +3,35 @@ import { SessionSummarizer } from './summarizer.js';
 import { generateLabel, LabelData } from './label-generator.js';
 import fs from 'fs';
 import path from 'path';
-import thermal from './print.js';
-
-const TARGET_PRINTER = 'PM-241-BT';
+import thermal, { device } from './print.js';
 
 export interface ProcessOptions {
   model?: string;
   tone?: string;
+  printer?: string;
 }
 
 export async function* processSessionAndPrint(sessionId: string, options: ProcessOptions = {}) {
   // 1. Initialize Printer Hardware
   const hw = thermal();
 
-  // Optional: Check if printer exists on startup
-  const printers = await hw.scan();
-  const printerAvailable = printers.find(p => p.name === TARGET_PRINTER);
-
-  if (!printerAvailable) {
-    console.warn(`⚠️ WARNING: Printer "${TARGET_PRINTER}" not found. Labels will be saved to disk only.`);
+  // Find printer: use specified name, or auto-discover
+  let printer: device | null = null;
+  if (options.printer) {
+    const printers = await hw.scan();
+    printer = printers.find(p => p.name === options.printer) || null;
+    if (!printer) {
+      console.warn(`⚠️ Printer "${options.printer}" not found. Labels will be saved to disk only.`);
+    }
   } else {
-    console.log(`🖨️  Connected to ${TARGET_PRINTER} (${printerAvailable.stat})`);
-    // Ensure queue is ready
-    await hw.fix(TARGET_PRINTER);
+    printer = await hw.find();
+  }
+
+  if (printer) {
+    console.log(`🖨️ Found printer: ${printer.name} (${printer.stat})`);
+    await hw.fix(printer.name);
+  } else if (!options.printer) {
+    console.warn('⚠️ No printer found. Labels will be saved to disk only.');
   }
 
   const summarizer = new SessionSummarizer({
@@ -37,6 +43,11 @@ export async function* processSessionAndPrint(sessionId: string, options: Proces
   let rollingSummary = "";
 
   const session = jules.session(sessionId);
+
+  // Fetch session info to get the actual repo
+  const sessionInfo = await session.info();
+  const repo = sessionInfo.sourceContext?.source?.replace('sources/github/', '') || 'unknown/repo';
+  console.log(`📦 Repository: ${repo}`);
 
   const outDir = path.resolve('output', sessionId);
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
@@ -55,7 +66,7 @@ export async function* processSessionAndPrint(sessionId: string, options: Proces
 
     // 3. Generate Label Image
     const labelData: LabelData = {
-      repo: 'davideast/jules.ink',
+      repo,
       sessionId: sessionId,
       summary: rollingSummary,
       files: filesForLabel
@@ -68,17 +79,17 @@ export async function* processSessionAndPrint(sessionId: string, options: Proces
     const filePath = path.join(outDir, filename);
     fs.writeFileSync(filePath, buffer);
 
-    // 5. PRINT TO PM-241-BT
-    if (printerAvailable) {
+    // 5. Print if printer available
+    if (printer) {
       try {
-        console.log(`🖨️  Sending to ${TARGET_PRINTER}...`);
+        console.log(`🖨️ Sending to ${printer.name}...`);
 
         // Auto-heal the printer queue if it got paused
-        await hw.fix(TARGET_PRINTER);
+        await hw.fix(printer.name);
 
-        const jobId = await hw.print(TARGET_PRINTER, buffer, {
-          fit: true, // Ensures the 300DPI image fits the 4x6 label
-          media: 'w288h432' // Standard 4x6 inch (usually) - Adjust if your cups setup uses a different media name
+        const jobId = await hw.print(printer.name, buffer, {
+          fit: true,
+          media: 'w288h432'
         });
 
         console.log(`✅ Job ID: ${jobId}`);

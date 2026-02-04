@@ -20,11 +20,9 @@ npm install
 
 # Set your API key
 export GEMINI_API_KEY="your-key"
+export JULES_API_KEY="jules-key"
 
-# Process a session
-jules-in at a tied match in extra timek
-a session
-jules-ink process --session <SESSION_ID>
+jules-ink process --session <SESSION_ID> -t haiku
 ```
 
 ## CLI Options
@@ -33,10 +31,11 @@ jules-ink process --session <SESSION_ID>
 Usage: jules-ink process [options]
 
 Options:
-  -s, --session <id>   Session ID to process (required)
-  -m, --model <name>   Gemini model (default: "gemini-2.5-flash-lite")
-  -t, --tone <preset>  Tone for summaries (default: "professional")
-  -h, --help           Display help
+  -s, --session <id>    Session ID to process (required)
+  -m, --model <name>    Gemini model (default: "gemini-2.5-flash-lite")
+  -t, --tone <preset>   Tone for summaries (default: "professional")
+  -p, --printer <name>  Printer name (auto-discovers if not set)
+  -h, --help            Display help
 ```
 
 ## Tone Presets

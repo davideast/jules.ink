@@ -15,10 +15,12 @@ program
   .requiredOption('-s, --session <id>', 'The Session ID to process')
   .option('-m, --model <name>', 'Gemini model to use for summarization', 'gemini-2.5-flash-lite')
   .option('-t, --tone <preset>', 'Tone preset for summaries (professional, pirate, shakespearean, excited, haiku, noir)', 'professional')
+  .option('-p, --printer <name>', 'Printer name (auto-discovers if not set)')
   .action(async (options) => {
     const sessionId = options.session;
     const model = options.model;
     const tone = options.tone;
+    const printer = options.printer;
 
     console.log(`\n🚀 Starting Label Pipeline for Session: ${sessionId}`);
     console.log(`📦 Using model: ${model}`);
@@ -26,7 +28,7 @@ program
     console.log(`===================================================\n`);
 
     try {
-      const generator = processSessionAndPrint(sessionId, { model, tone });
+      const generator = processSessionAndPrint(sessionId, { model, tone, printer });
 
       for await (const result of generator) {
         console.log(`✓ [${result.activity.type}] Processed`);
