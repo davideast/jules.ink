@@ -17,6 +17,7 @@
     "prepublishOnly": "npm run build",
     "start": "tsx src/index.ts",
     "test": "vitest",
+    "test:smoke": "vitest run tests/cli.smoke.test.ts",
     "gen:assets": "tsx scripts/create-base-template.ts"
   },
   "keywords": [

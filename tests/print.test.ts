@@ -9,11 +9,15 @@ vi.mock('node:child_process', () => ({
   exec: vi.fn(),
 }));
 
-vi.mock('node:fs/promises', () => ({
-  writeFile: vi.fn(),
-  unlink: vi.fn(),
-  access: vi.fn(),
-}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    writeFile: vi.fn(),
+    unlink: vi.fn(),
+    access: vi.fn(),
+  };
+});
 
 // Cast the mocked functions for type safety and autocompletion
 const mockedExec = vi.mocked(exec);

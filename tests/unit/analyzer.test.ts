@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeChangeSet, BLOCK_FULL, BLOCK_LIGHT } from '../../src/analyzer.js';
+import { analyzeChangeSet } from '../../src/analyzer.js';
 
 const MOCK_DIFF = `
 diff --git a/src/api.ts b/src/api.ts
@@ -25,17 +25,12 @@ describe('ChangeSet Analyzer', () => {
 
   it('generates the correct summary string', () => {
     const result = analyzeChangeSet(MOCK_DIFF);
-    expect(result.summaryString).toBe('1 files changed, 3 insertions(+), 1 deletions(-)');
+    expect(result.summaryString).toBe('1 files | +3 / -1');
   });
 
-  it('generates a proportional visual graph', () => {
-    // 3 adds, 1 del. Total 4.
-    // Ratio: 75% add, 25% del.
-    const result = analyzeChangeSet(MOCK_DIFF, { maxGraphWidth: 4 });
-
-    // We expect 3 full blocks and 1 light block
-    const expectedGraph = BLOCK_FULL.repeat(3) + BLOCK_LIGHT.repeat(1);
-    expect(result.files[0].graph).toBe(expectedGraph);
+  it('includes totalChanges for each file', () => {
+    const result = analyzeChangeSet(MOCK_DIFF);
+    expect(result.files[0].totalChanges).toBe(4); // 3 adds + 1 del
   });
 
   it('handles empty diffs gracefully', () => {
