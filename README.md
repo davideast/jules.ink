@@ -1,44 +1,116 @@
-# Jules Ink
+# Jules Ink 🖨️
 
-Jules Ink is a command-line tool that analyzes Jules session data to provide real-time metrics and summaries of code changes. It streams session activities, processes Git patch data, and generates insightful summaries of file impacts, including insertions, deletions, and visual graphs of changes.
+**Print physical labels of your AI coding sessions.** Jules Ink connects to [Jules](https://jules.google.com) sessions, generates AI-powered summaries, and prints them to thermal label printers.
 
-## About
+![grumpy-cat](./assets/labels/grumpy-cat.png)
 
-This tool is designed to help developers and teams monitor and understand the development process in real-time. By connecting to a Jules session, Jules Ink provides a live feed of code changes, making it easy to track progress, identify trends, and stay on top of project activity.
+## Why?
 
-## Features
+Because watching an AI write code is cool. But having a **physical artifact** of what it did? That's cooler.
 
-- **Real-time Monitoring**: Streams Jules session data to provide live updates of code changes.
-- **Change Analysis**: Parses Git patch data to calculate insertions, deletions, and total changes for each file.
-- **Visual Graphs**: Generates visual representations of changes for a quick and intuitive understanding of file impacts.
-- **Session Summaries**: Provides a summary of changes, including the total number of files changed, insertions, and deletions.
+- 📝 **Document your AI pair programming** — Keep a tangible record of what Jules built
+- 🎉 **Make it fun** — Print summaries as a pirate, Shakespeare, or a noir detective
+- 🏷️ **Label your commits** — Stick them on your monitor, notebook, or fridge
 
-## Architecture
-
-Jules Ink is built with Node.js and TypeScript, and it leverages the following key technologies:
-
-- **`modjules`**: A library for interacting with the Jules API and streaming session data.
-- **`parse-diff`**: A library for parsing Git patch data.
-- **`tsx`**: A TypeScript execution environment for running the application.
-- **`vitest`**: A testing framework for running unit and integration tests.
-
-## Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/your-username/jules-ink.git
-   ```
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-## Usage
-
-To start monitoring a Jules session, run the following command, replacing `[session-id]` with the ID of the session you want to analyze:
+## Quick Start
 
 ```bash
-npm start -- [session-id]
+# Install dependencies
+npm install
+
+# Set your API key
+export GEMINI_API_KEY="your-key"
+
+# Process a session
+jules-in at a tied match in extra timek
+a session
+jules-ink process --session <SESSION_ID>
 ```
 
-Jules Ink will then connect to the session and start streaming activity data, displaying real-time summaries of code changes as they happen.
+## CLI Options
+
+```
+Usage: jules-ink process [options]
+
+Options:
+  -s, --session <id>   Session ID to process (required)
+  -m, --model <name>   Gemini model (default: "gemini-2.5-flash-lite")
+  -t, --tone <preset>  Tone for summaries (default: "professional")
+  -h, --help           Display help
+```
+
+## Tone Presets
+
+Make your labels fun with built-in tone presets:
+
+| Tone | Example Output |
+|------|----------------|
+| `professional` | "Refactoring `SessionClient` to support new handshake protocol." |
+| `pirate` | "Arr! We be refactorin' the `SessionClient`, matey!" |
+| `shakespearean` | "Hark! The `SessionClient` doth receive new methods most fair." |
+| `excited` | "OMG!! 🎉 Just refactored `SessionClient`!!! SO EXCITING!!! 🚀" |
+| `haiku` | "Code flows like a stream / SessionClient transforms / Bugs fade to nothing" |
+| `noir` | "The function had seen better days. I gave it a new life." |
+
+### Custom Tones
+
+Pass any string to `-t` for a custom tone:
+
+```bash
+# Characters
+jules-ink process -s 123456 -t "Respond as if you're a grumpy cat"
+jules-ink process -s 123456 -t "Write like a sports commentator at a tied match in extra time"
+jules-ink process -s 123456 -t "Write like a nature documentary narrator observing code in its natural habitat"
+jules-ink process -s 123456 -t "Respond like a dramatic movie trailer voiceover"
+jules-ink process -s 123456 -t "Write as a medieval herald announcing royal decrees"
+
+# Professions & styles
+jules-ink process -s 123456 -t "Write like a sports commentator at a tied match in extra time"
+jules-ink process -s 123456 -t "Respond as a surfer dude who just discovered coding"
+jules-ink process -s 123456 -t "Write like a food critic reviewing a gourmet meal"
+jules-ink process -s 123456 -t "Respond as an overly enthusiastic infomercial host"
+jules-ink process -s 123456 -t "Respond like a soap opera actor"
+
+# Moods & vibes
+jules-ink process -s 123456 -t "Write with the energy of someone who just had 5 espressos"
+jules-ink process -s 123456 -t "Respond like a wise grandparent telling stories by the fire"
+jules-ink process -s 123456 -t "Write as if you're whispering secrets at a library"
+jules-ink process -s 123456 -t "Respond with the dramatic flair of a telenovela narrator"
+```
+
+## Use Cases
+
+### 1. Physical Commit Log
+
+Print a label for each coding session and stick them in a notebook:
+
+```bash
+jules-ink process -s 561934200180369816 at a tied match in extra time9
+jules-ink process -s 5619342001803698169
+```
+
+### 2. Fun Team Activity
+
+Have Jules write code, then print the summary as a haiku:
+
+```bash
+jules-ink process -s 5619342001803698169 -t haik at a tied match in extra timeu
+jules-ink process -s 5619342001803698169 -t haiku
+```
+
+## Printer Setup
+
+Jules Ink works with thermal label printers via CUPS. The default target is `PM-241-BT` (a common Bluetooth thermal printer).
+
+If no printer is found, labels are saved to `output/<session-id>/` as PNG files.
+
+## Requirements
+
+- Node.js 18+
+- `GEMINI_API_KEY` environment variable
+- `JULES_API_KEY` environment variable
+- (Optional) Thermal label printer
+
+## License
+
+MIT
