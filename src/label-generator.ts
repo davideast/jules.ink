@@ -4,8 +4,14 @@ import fs from 'fs';
 import { calculateWrappedLines, TextSegment, truncateMiddle } from './utils.js';
 import { parseMarkdownSegments, calculateWrappedSegments } from './utils.js';
 
-// --- Font Registration ---
-const FONT_DIR = path.resolve('./assets/fonts');
+// --- Path Resolution ---
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+// assets are in ../assets relative to dist/label-generator.js
+const ASSETS_DIR = path.join(__dirname, '..', 'assets');
+const FONT_DIR = path.join(ASSETS_DIR, 'fonts');
+
 function registerLocalFont(filename: string, family: string) {
   const filePath = path.join(FONT_DIR, filename);
   if (fs.existsSync(filePath)) GlobalFonts.registerFromPath(filePath, family);
@@ -66,7 +72,7 @@ export async function generateLabel(data: LabelData): Promise<Buffer> {
   const canvas = createCanvas(CONFIG.width, CONFIG.height);
   const ctx = canvas.getContext('2d');
 
-  const templatePath = path.resolve('./assets/template.png');
+  const templatePath = path.join(ASSETS_DIR, 'template.png');
   if (fs.existsSync(templatePath)) {
     const template = await loadImage(templatePath);
     ctx.drawImage(template, 0, 0, CONFIG.width, CONFIG.height);

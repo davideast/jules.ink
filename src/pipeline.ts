@@ -9,6 +9,7 @@ export interface ProcessOptions {
   model?: string;
   tone?: string;
   printer?: string;
+  outputDir?: string;
 }
 
 export async function* processSessionAndPrint(sessionId: string, options: ProcessOptions = {}) {
@@ -49,7 +50,15 @@ export async function* processSessionAndPrint(sessionId: string, options: Proces
   const repo = sessionInfo.sourceContext?.source?.replace('sources/github/', '') || 'unknown/repo';
   console.log(`📦 Repository: ${repo}`);
 
-  const outDir = path.resolve('output', sessionId);
+  // Base directory precedence:
+  // 1. CLI Option
+  // 2. Environment Variable
+  // 3. Default 'output' (relative to CWD)
+  const baseDir = options.outputDir
+    || process.env.JULES_INK_OUTPUT_DIR
+    || 'output';
+
+  const outDir = path.resolve(baseDir, sessionId);
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
   let count = 0;

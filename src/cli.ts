@@ -16,11 +16,13 @@ program
   .option('-m, --model <name>', 'Gemini model to use for summarization', 'gemini-2.5-flash-lite')
   .option('-t, --tone <preset>', 'Tone preset for summaries (professional, pirate, shakespearean, excited, haiku, noir)', 'professional')
   .option('-p, --printer <name>', 'Printer name (auto-discovers if not set)')
+  .option('-o, --output <path>', 'Output directory for labels')
   .action(async (options) => {
     const sessionId = options.session;
     const model = options.model;
     const tone = options.tone;
     const printer = options.printer;
+    const outputDir = options.output;
 
     console.log(`\n🚀 Starting Label Pipeline for Session: ${sessionId}`);
     console.log(`📦 Using model: ${model}`);
@@ -28,7 +30,7 @@ program
     console.log(`===================================================\n`);
 
     try {
-      const generator = processSessionAndPrint(sessionId, { model, tone, printer });
+      const generator = processSessionAndPrint(sessionId, { model, tone, printer, outputDir });
 
       for await (const result of generator) {
         console.log(`✓ [${result.activity.type}] Processed`);
