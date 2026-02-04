@@ -10,8 +10,8 @@ program
   .version('0.0.0');
 
 program
-  .command('process')
-  .description('Process a Jules session and generate labels')
+  .command('print')
+  .description('Print labels for a Jules session')
   .requiredOption('-s, --session <id>', 'The Session ID to process')
   .option('-m, --model <name>', 'Gemini model to use for summarization', 'gemini-2.5-flash-lite')
   .option('-t, --tone <preset>', 'Tone preset for summaries (professional, pirate, shakespearean, excited, haiku, noir)', 'professional')

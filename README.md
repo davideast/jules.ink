@@ -22,13 +22,13 @@ npm install
 export GEMINI_API_KEY="your-key"
 export JULES_API_KEY="jules-key"
 
-jules-ink process --session <SESSION_ID> -t haiku
+jules-ink print --session <SESSION_ID> -t haiku
 ```
 
 ## CLI Options
 
 ```
-Usage: jules-ink process [options]
+Usage: jules-ink print [options]
 
 Options:
   -s, --session <id>    Session ID to process (required)
@@ -57,24 +57,24 @@ Pass any string to `-t` for a custom tone:
 
 ```bash
 # Characters
-jules-ink process -s 123456 -t "Respond as if you're a grumpy cat"
-jules-ink process -s 123456 -t "Write like a sports commentator at a tied match in extra time"
-jules-ink process -s 123456 -t "Write like a nature documentary narrator observing code in its natural habitat"
-jules-ink process -s 123456 -t "Respond like a dramatic movie trailer voiceover"
-jules-ink process -s 123456 -t "Write as a medieval herald announcing royal decrees"
+jules-ink print -s 123456 -t "Respond as if you're a grumpy cat"
+jules-ink print -s 123456 -t "Write like a sports commentator at a tied match in extra time"
+jules-ink print -s 123456 -t "Write like a nature documentary narrator observing code in its natural habitat"
+jules-ink print -s 123456 -t "Respond like a dramatic movie trailer voiceover"
+jules-ink print -s 123456 -t "Write as a medieval herald announcing royal decrees"
 
 # Professions & styles
-jules-ink process -s 123456 -t "Write like a sports commentator at a tied match in extra time"
-jules-ink process -s 123456 -t "Respond as a surfer dude who just discovered coding"
-jules-ink process -s 123456 -t "Write like a food critic reviewing a gourmet meal"
-jules-ink process -s 123456 -t "Respond as an overly enthusiastic infomercial host"
-jules-ink process -s 123456 -t "Respond like a soap opera actor"
+jules-ink print -s 123456 -t "Write like a sports commentator at a tied match in extra time"
+jules-ink print -s 123456 -t "Respond as a surfer dude who just discovered coding"
+jules-ink print -s 123456 -t "Write like a food critic reviewing a gourmet meal"
+jules-ink print -s 123456 -t "Respond as an overly enthusiastic infomercial host"
+jules-ink print -s 123456 -t "Respond like a soap opera actor"
 
 # Moods & vibes
-jules-ink process -s 123456 -t "Write with the energy of someone who just had 5 espressos"
-jules-ink process -s 123456 -t "Respond like a wise grandparent telling stories by the fire"
-jules-ink process -s 123456 -t "Write as if you're whispering secrets at a library"
-jules-ink process -s 123456 -t "Respond with the dramatic flair of a telenovela narrator"
+jules-ink print -s 123456 -t "Write with the energy of someone who just had 5 espressos"
+jules-ink print -s 123456 -t "Respond like a wise grandparent telling stories by the fire"
+jules-ink print -s 123456 -t "Write as if you're whispering secrets at a library"
+jules-ink print -s 123456 -t "Respond with the dramatic flair of a telenovela narrator"
 ```
 
 ## Use Cases
@@ -84,8 +84,8 @@ jules-ink process -s 123456 -t "Respond with the dramatic flair of a telenovela 
 Print a label for each coding session and stick them in a notebook:
 
 ```bash
-jules-ink process -s 561934200180369816 at a tied match in extra time9
-jules-ink process -s 5619342001803698169
+jules-ink print -s 561934200180369816 at a tied match in extra time9
+jules-ink print -s 5619342001803698169
 ```
 
 ### 2. Fun Team Activity
@@ -93,8 +93,8 @@ jules-ink process -s 5619342001803698169
 Have Jules write code, then print the summary as a haiku:
 
 ```bash
-jules-ink process -s 5619342001803698169 -t haik at a tied match in extra timeu
-jules-ink process -s 5619342001803698169 -t haiku
+jules-ink print -s 5619342001803698169 -t haik at a tied match in extra timeu
+jules-ink print -s 5619342001803698169 -t haiku
 ```
 
 ## Printer Setup
