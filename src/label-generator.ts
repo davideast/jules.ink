@@ -14,6 +14,9 @@ registerLocalFont('GoogleSans-Bold.ttf', 'Google Sans');
 registerLocalFont('GoogleSans-Regular.ttf', 'Google Sans');
 registerLocalFont('GoogleSansMono-Regular.ttf', 'Google Sans Mono');
 
+// Emoji font fallback (uses system fonts)
+const EMOJI_FALLBACK = ', "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
+
 // --- Configuration ---
 const CONFIG = {
   width: 1200,
@@ -21,8 +24,8 @@ const CONFIG = {
   padding: 64,
 
   fonts: {
-    header: '36px "Google Sans Mono", monospace',
-    stats: '42px "Google Sans Mono", monospace',
+    header: `36px "Google Sans Mono", monospace${EMOJI_FALLBACK}`,
+    stats: `42px "Google Sans Mono", monospace${EMOJI_FALLBACK}`,
   },
 
   layout: {
@@ -138,9 +141,9 @@ function drawBodyAnchored(ctx: any, text: string, fixedY: number, maxHeight: num
   // 2. Shrink Loop (Now uses segment wrapper)
   do {
     weight = fontSize > 60 ? 'bold' : 'normal';
-    normalFontStr = `${weight} ${fontSize}px "Google Sans"`;
+    normalFontStr = `${weight} ${fontSize}px "Google Sans"${EMOJI_FALLBACK}`;
     // Use slightly smaller font for mono so it doesn't overpower the text
-    codeFontStr = `normal ${fontSize - 4}px "Google Sans Mono"`;
+    codeFontStr = `normal ${fontSize - 4}px "Google Sans Mono"${EMOJI_FALLBACK}`;
 
     // Use new wrapper that understands mixed fonts
     wrappedLines = calculateWrappedSegments(ctx, allSegments, maxWidth, normalFontStr, codeFontStr);
