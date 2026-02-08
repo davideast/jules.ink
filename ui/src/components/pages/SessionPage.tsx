@@ -12,6 +12,11 @@ import { PrinterDropdown } from '../PrinterDropdown';
 import type { PrinterOption } from '../PrinterDropdown';
 import { useSessionStream } from '../../hooks/useSessionStream';
 import { usePrinters } from '../../hooks/usePrinters';
+import {
+  type PrintStack,
+  savePrintStack,
+  getPrintStack,
+} from '../../lib/print-stack';
 
 type RightPanelMode = 'reading' | 'creating';
 
@@ -36,6 +41,7 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
   const [activeLabelIndex, setActiveLabelIndex] = useState(0);
   const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
   const [savedTones, setSavedTones] = useState<SavedTone[]>([]);
+  const [currentStackId, setCurrentStackId] = useState<string | null>(null);
 
   const stream = useSessionStream();
   const printerHook = usePrinters();
@@ -53,10 +59,46 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
     }
   }, [stream.activities.length]);
 
+  // Update tone in stream when selectedTone changes
+  useEffect(() => {
+    stream.setTone(selectedTone.toLowerCase());
+  }, [selectedTone, stream]);
+
+  // Persist activities to PrintStack
+  useEffect(() => {
+    if (!currentStackId) return;
+
+    const currentStack = getPrintStack(currentStackId);
+    if (currentStack) {
+      const activitiesToSave = stream.activities.map(
+        ({ imageUrl, ...rest }) => rest,
+      );
+      const updatedStack: PrintStack = {
+        ...currentStack,
+        repo: stream.sessionInfo?.repo || currentStack.repo,
+        sessionId: stream.sessionInfo?.sessionId || currentStack.sessionId,
+        activities: activitiesToSave,
+      };
+      savePrintStack(updatedStack);
+    }
+  }, [currentStackId, stream.activities, stream.sessionInfo]);
+
   const handlePlay = useCallback(() => {
     if (stream.sessionState === 'paused') {
       stream.resume();
     } else {
+      const newStackId = crypto.randomUUID();
+      const newStack: PrintStack = {
+        id: newStackId,
+        sessionId: sessionId,
+        tone: selectedTone,
+        repo: stream.sessionInfo?.repo || '',
+        startedAt: new Date().toISOString(),
+        activities: [],
+      };
+      savePrintStack(newStack);
+      setCurrentStackId(newStackId);
+
       stream.play(sessionId, selectedTone.toLowerCase());
     }
   }, [sessionId, selectedTone, stream]);
@@ -66,6 +108,7 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
   }, [stream]);
 
   const handleStop = useCallback(() => {
+    setCurrentStackId(null);
     stream.stop();
     setActiveLabelIndex(0);
   }, [stream]);

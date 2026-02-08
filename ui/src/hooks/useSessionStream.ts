@@ -27,6 +27,7 @@ export interface UseSessionStreamReturn {
   pause: () => void;
   resume: () => void;
   stop: () => void;
+  setTone: (tone: string) => void;
   error: string | null;
 }
 
@@ -175,5 +176,9 @@ export function useSessionStream(): UseSessionStreamReturn {
     }
   }, [closeEventSource]);
 
-  return { sessionInfo, activities, sessionState, play, pause, resume, stop, error };
+  const setTone = useCallback((tone: string) => {
+    toneRef.current = tone;
+  }, []);
+
+  return { sessionInfo, activities, sessionState, play, pause, resume, stop, setTone, error };
 }
