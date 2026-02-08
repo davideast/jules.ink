@@ -86,13 +86,33 @@ export interface LabelData {
   files: FileStat[];
 }
 
+let templatePromise: Promise<any> | null = null;
+
+async function getTemplate(): Promise<any> {
+  if (templatePromise) return templatePromise;
+
+  templatePromise = (async () => {
+    const templatePath = path.join(ASSETS_DIR, 'template.png');
+    if (fs.existsSync(templatePath)) {
+      try {
+        return await loadImage(templatePath);
+      } catch (error) {
+        console.error('Failed to load template image:', error);
+        return null;
+      }
+    }
+    return null;
+  })();
+
+  return templatePromise;
+}
+
 export async function generateLabel(data: LabelData): Promise<Buffer> {
   const canvas = createCanvas(CONFIG.width, CONFIG.height);
   const ctx = canvas.getContext('2d');
 
-  const templatePath = path.join(ASSETS_DIR, 'template.png');
-  if (fs.existsSync(templatePath)) {
-    const template = await loadImage(templatePath);
+  const template = await getTemplate();
+  if (template) {
     ctx.drawImage(template, 0, 0, CONFIG.width, CONFIG.height);
   } else {
     ctx.fillStyle = 'white';
