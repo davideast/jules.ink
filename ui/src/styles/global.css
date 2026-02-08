@@ -1,0 +1,44 @@
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #1e1e24;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #33333f;
+  border-radius: 2px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #444455;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.label-card {
+  width: 340px;
+  aspect-ratio: 2 / 3;
+  background-color: #ffffff;
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  border-radius: 2px;
+  border: 1px solid #e5e5e5;
+  position: relative;
+}
+
+.active-card-container {
+  border-left: 2px solid white;
+  margin-left: -2px;
+  padding-left: 2px;
+}

@@ -6,3 +6,5 @@ dist
 output/
 *.js
 test-results/
+.astro
+screens
