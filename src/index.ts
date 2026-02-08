@@ -1,0 +1,18 @@
+// Library barrel export — the public API of jules-ink
+
+export { streamSession } from './session-stream.js';
+export type { SessionEvent, SessionStreamOptions } from './session-stream.js';
+
+export { SessionSummarizer } from './summarizer.js';
+export type { SummarizerConfig, TonePreset } from './summarizer.js';
+
+export { analyzeChangeSet } from './analyzer.js';
+export type { FileImpact, ChangeSetSummary } from './types.js';
+
+export { generateLabel } from './label-generator.js';
+export type { LabelData, FileStat } from './label-generator.js';
+
+export { default as thermal } from './print.js';
+export type { device, config } from './print.js';
+
+export { TONE_PRESETS } from './tone-presets.js';

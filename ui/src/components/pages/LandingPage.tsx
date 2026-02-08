@@ -19,7 +19,7 @@ export function LandingPage() {
 
   const handleSessionInput = (id: string) => {
     if (id.trim()) {
-      window.location.href = '/session';
+      window.location.href = `/session?id=${encodeURIComponent(id.trim())}`;
     }
   };
 

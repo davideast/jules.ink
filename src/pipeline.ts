@@ -1,3 +1,8 @@
+/**
+ * @deprecated Use `streamSession` from `./session-stream.js` instead.
+ * This module couples streaming, file I/O, and printing in a single generator.
+ * The new `streamSession` yields portable typed events without I/O side effects.
+ */
 import { jules } from '@google/jules-sdk';
 import { SessionSummarizer } from './summarizer.js';
 import { generateLabel, LabelData } from './label-generator.js';
@@ -5,6 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import thermal, { device } from './print.js';
 
+/** @deprecated Use `SessionStreamOptions` from `./session-stream.js` instead. */
 export interface ProcessOptions {
   model?: string;
   tone?: string;
@@ -12,6 +18,7 @@ export interface ProcessOptions {
   outputDir?: string;
 }
 
+/** @deprecated Use `streamSession` from `./session-stream.js` instead. */
 export async function* processSessionAndPrint(sessionId: string, options: ProcessOptions = {}) {
   // 1. Initialize Printer Hardware
   const hw = thermal();
