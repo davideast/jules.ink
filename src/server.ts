@@ -3,30 +3,30 @@ import { serve } from '@hono/node-server';
 import { cors } from 'hono/cors';
 import { GoogleGenAI } from "@google/genai";
 import thermal from './print.js';
+import { fileURLToPath } from 'url';
 
 const app = new Hono();
 const port = 3000;
 const hw = thermal();
 
-app.use('/*', cors());
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  : ['http://localhost:4321', 'http://localhost:3000'];
 
-const controller = new AbortController();
-hw.watch(controller.signal);
-
-process.on('SIGINT', () => {
-  controller.abort();
-  process.exit();
-});
+app.use('/*', cors({
+  origin: allowedOrigins,
+}));
 
 const apiKey = process.env["GEMINI_API_KEY"];
-if (!apiKey) {
-  throw new Error("GEMINI_API_KEY environment variable is required");
-}
-const ai = new GoogleGenAI({ apiKey });
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 const model = "imagen-4.0-generate-001";
 
 app.post('/api/generate', async (c) => {
+  if (!ai) {
+    return c.json({ error: "GEMINI_API_KEY environment variable is required" }, 500);
+  }
+
   const { prompt } = await c.req.json();
   if (!prompt) return c.json({ error: 'prompt required' }, 400);
 
@@ -63,6 +63,24 @@ app.post('/api/generate', async (c) => {
   }
 });
 
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`🚀 server at http://localhost:${info.port}`);
-});
+export default app;
+
+const isMain = process.argv[1] === fileURLToPath(import.meta.url) || process.argv[1]?.endsWith('server.ts');
+
+if (isMain) {
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY environment variable is required");
+  }
+
+  const controller = new AbortController();
+  hw.watch(controller.signal);
+
+  process.on('SIGINT', () => {
+    controller.abort();
+    process.exit();
+  });
+
+  serve({ fetch: app.fetch, port }, (info) => {
+    console.log(`🚀 server at http://localhost:${info.port}`);
+  });
+}
