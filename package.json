@@ -12,10 +12,16 @@
     "dist",
     "assets"
   ],
+  "workspaces": [
+    "ui"
+  ],
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
     "start": "tsx src/index.ts",
+    "dev:ui": "npm run dev -w ui",
+    "build:ui": "npm run build -w ui",
+    "preview:ui": "npm run preview -w ui",
     "test": "vitest",
     "test:smoke": "vitest run tests/cli.smoke.test.ts",
     "gen:assets": "tsx scripts/create-base-template.ts"
