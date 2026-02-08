@@ -12,6 +12,7 @@ export interface PrintStack {
     files: { path: string; additions: number; deletions: number }[];
     commitMessage?: string;
     createTime?: string;
+    tone?: string;
   }[];
 }
 

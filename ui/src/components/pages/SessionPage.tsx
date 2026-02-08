@@ -259,7 +259,7 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
         <aside className="w-[45%] bg-sidebar-bg flex flex-col relative h-full">
           {rightPanelMode === 'reading' ? (
             <ReadingPane
-              toneName={selectedTone}
+              toneName={activeActivity?.tone || selectedTone}
               summary={
                 activeActivity?.summary ||
                 (stream.sessionState === 'idle'
