@@ -5,23 +5,41 @@ import { calculateWrappedLines, TextSegment, truncateMiddle } from './utils.js';
 import { parseMarkdownSegments, calculateWrappedSegments } from './utils.js';
 
 // --- Path Resolution ---
+// Resolve assets from the project root. We try import.meta.url first (works
+// when running directly from dist/), then fall back to process.cwd() which
+// handles the Vite-bundled SSR case where import.meta.url points at the
+// Astro output chunk instead of the original dist/ file.
 import { fileURLToPath } from 'url';
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-// assets are in ../assets relative to dist/label-generator.js
-const ASSETS_DIR = path.join(__dirname, '..', 'assets');
+
+function resolveAssetsDir(): string {
+  // Try 1: relative to this file (dist/label-generator.js → ../assets)
+  try {
+    const dir = path.dirname(fileURLToPath(import.meta.url));
+    const candidate = path.join(dir, '..', 'assets');
+    if (fs.existsSync(path.join(candidate, 'fonts'))) return candidate;
+  } catch { /* import.meta.url might not resolve usefully */ }
+
+  // Try 2: relative to cwd (project root → assets)
+  const cwdCandidate = path.join(process.cwd(), 'assets');
+  if (fs.existsSync(path.join(cwdCandidate, 'fonts'))) return cwdCandidate;
+
+  // Fallback: return the cwd candidate anyway; registerLocalFont will just skip missing files
+  return cwdCandidate;
+}
+
+const ASSETS_DIR = resolveAssetsDir();
 const FONT_DIR = path.join(ASSETS_DIR, 'fonts');
 
 function registerLocalFont(filename: string, family: string) {
   const filePath = path.join(FONT_DIR, filename);
   if (fs.existsSync(filePath)) GlobalFonts.registerFromPath(filePath, family);
 }
-registerLocalFont('GoogleSans-Bold.ttf', 'Google Sans');
-registerLocalFont('GoogleSans-Regular.ttf', 'Google Sans');
-registerLocalFont('GoogleSansMono-Regular.ttf', 'Google Sans Mono');
-
-// Emoji font fallback (uses system fonts)
-const EMOJI_FALLBACK = ', "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
+// Use unique family names to avoid @napi-rs/canvas font-cache poisoning:
+// once a name resolves to a fallback, it's permanently cached even after
+// the real font is registered. Unique names guarantee first-resolution
+// always finds the registered font.
+registerLocalFont('Inter-Medium.ttf', 'LabelSans');
+registerLocalFont('JetBrainsMono-Regular.ttf', 'LabelMono');
 
 // --- Configuration ---
 const CONFIG = {
@@ -30,8 +48,8 @@ const CONFIG = {
   padding: 64,
 
   fonts: {
-    header: `36px "Google Sans Mono", monospace${EMOJI_FALLBACK}`,
-    stats: `42px "Google Sans Mono", monospace${EMOJI_FALLBACK}`,
+    header: '36px "LabelMono", monospace',
+    stats: '42px "LabelMono", monospace',
   },
 
   layout: {
@@ -114,11 +132,11 @@ function drawHeader(ctx: any, repo: string, sessionId: string) {
   const maxRepoWidth = width - (padding * 2) - sessionWidth - 40;
 
   let fontSize = 36;
-  ctx.font = `${fontSize}px "Google Sans Mono", monospace`;
+  ctx.font = `${fontSize}px "LabelMono", monospace`;
 
   while (ctx.measureText(repo).width > maxRepoWidth && fontSize > 20) {
     fontSize -= 2;
-    ctx.font = `${fontSize}px "Google Sans Mono", monospace`;
+    ctx.font = `${fontSize}px "LabelMono", monospace`;
   }
 
   ctx.textAlign = 'left';
@@ -139,17 +157,14 @@ function drawBodyAnchored(ctx: any, text: string, fixedY: number, maxHeight: num
   let wrappedLines: TextSegment[][] = [];
   let lineHeight = 0;
   let totalTextHeight = 0;
-  let weight = 'bold';
   let normalFontStr = '';
-  // Monospace font size should match body size roughly
   let codeFontStr = '';
 
   // 2. Shrink Loop (Now uses segment wrapper)
   do {
-    weight = fontSize > 60 ? 'bold' : 'normal';
-    normalFontStr = `${weight} ${fontSize}px "Google Sans"${EMOJI_FALLBACK}`;
+    normalFontStr = `${fontSize}px "LabelSans"`;
     // Use slightly smaller font for mono so it doesn't overpower the text
-    codeFontStr = `normal ${fontSize - 4}px "Google Sans Mono"${EMOJI_FALLBACK}`;
+    codeFontStr = `${fontSize - 4}px "LabelMono", monospace`;
 
     // Use new wrapper that understands mixed fonts
     wrappedLines = calculateWrappedSegments(ctx, allSegments, maxWidth, normalFontStr, codeFontStr);
@@ -244,7 +259,7 @@ function drawStatsFixed(ctx: any, files: FileStat[], fixedY: number) {
 
   if (hiddenCount > 0) {
     ctx.textAlign = 'center';
-    ctx.font = `italic 32px "Google Sans", sans-serif`;
+    ctx.font = `italic 32px "LabelSans", sans-serif`;
     ctx.fillText(`+ ${hiddenCount} more files...`, CONFIG.width / 2, currentY + 20);
   }
 }

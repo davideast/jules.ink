@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { TopBar } from '../TopBar';
 import type { SessionState } from '../TopBar';
 import { ToneBar } from '../ToneBar';
@@ -10,15 +10,10 @@ import type { SavedTone } from '../ToneCreator';
 import { StatusBar } from '../StatusBar';
 import { PrinterDropdown } from '../PrinterDropdown';
 import type { PrinterOption } from '../PrinterDropdown';
+import { useSessionStream } from '../../hooks/useSessionStream';
+import { usePrinters } from '../../hooks/usePrinters';
 
 type RightPanelMode = 'reading' | 'creating';
-
-interface LabelData {
-  id: string;
-  time: string;
-  eventType: string;
-  content: React.ReactNode;
-}
 
 const DEFAULT_TONES = [
   'Noir',
@@ -27,123 +22,53 @@ const DEFAULT_TONES = [
   'Shakespearean',
   'Excited',
   'Haiku',
-  'Surfer',
-  'Butler',
 ];
 
-const DEMO_LABELS: LabelData[] = [
-  {
-    id: '1',
-    time: '10:42 AM',
-    eventType: 'CODE',
-    content: (
-      <>
-        <div className="flex flex-col gap-4">
-          <div className="w-2/3 h-4 bg-black rounded-sm" />
-          <div className="w-1/3 h-2 bg-gray-400 rounded-sm" />
-          <div className="mt-8 flex flex-col gap-2">
-            <div className="w-full h-1.5 bg-gray-800 rounded-sm" />
-            <div className="w-full h-1.5 bg-gray-800 rounded-sm" />
-            <div className="w-5/6 h-1.5 bg-gray-800 rounded-sm" />
-            <div className="w-full h-1.5 bg-gray-800 rounded-sm" />
-            <div className="w-4/5 h-1.5 bg-gray-800 rounded-sm" />
-          </div>
-        </div>
-        <div className="mt-auto self-end opacity-80">
-          <div className="w-12 h-12 border border-black p-0.5 grid grid-cols-2 gap-0.5">
-            <div className="bg-black" />
-            <div className="bg-transparent" />
-            <div className="bg-transparent" />
-            <div className="bg-black" />
-          </div>
-        </div>
-      </>
-    ),
-  },
-  {
-    id: '2',
-    time: '10:45 AM',
-    eventType: 'PLAN',
-    content: (
-      <>
-        <div className="flex flex-col gap-4">
-          <div className="w-3/4 h-4 bg-black rounded-sm" />
-          <div className="w-1/2 h-2 bg-gray-400 rounded-sm" />
-          <div className="mt-6 flex flex-col gap-2">
-            <div className="w-full h-1.5 bg-gray-800 rounded-sm" />
-            <div className="w-11/12 h-1.5 bg-gray-800 rounded-sm" />
-            <div className="w-full h-1.5 bg-gray-800 rounded-sm" />
-          </div>
-        </div>
-        <div className="flex justify-between items-end border-t-2 border-black pt-4 mt-auto">
-          <div className="text-xs font-mono font-bold">JD-204</div>
-          <div className="w-12 h-1.5 bg-gray-800 rounded-sm" />
-        </div>
-      </>
-    ),
-  },
-  {
-    id: '3',
-    time: '11:02 AM',
-    eventType: 'CODE',
-    content: (
-      <div className="flex flex-col gap-4 text-center items-center pt-4">
-        <div className="w-16 h-16 rounded-full border-[4px] border-black flex items-center justify-center mb-2">
-          <span className="material-symbols-outlined text-black text-3xl">
-            local_police
-          </span>
-        </div>
-        <div className="w-3/4 h-4 bg-black rounded-sm" />
-        <div className="mt-2 flex flex-col gap-2 w-full items-center">
-          <div className="w-5/6 h-1.5 bg-gray-600 rounded-sm" />
-          <div className="w-4/5 h-1.5 bg-gray-600 rounded-sm" />
-        </div>
-      </div>
-    ),
-  },
-];
+interface SessionPageProps {
+  sessionId?: string;
+}
 
-const DEMO_PRINTERS: PrinterOption[] = [
-  { name: 'PM-241-BT', online: true },
-  { name: 'DYMO-450', online: false },
-];
-
-const DEMO_SAVED_TONES: SavedTone[] = [
-  {
-    name: 'Surfer',
-    instructions:
-      "Uses a lot of slang like 'radical' and 'tubular', very relaxed pacing, ends sentences with 'dude'...",
-  },
-  {
-    name: 'Butler',
-    instructions:
-      "Extremely polite and formal, refers to the user as 'Sir' or 'Madam', uses sophisticated vocabulary...",
-  },
-];
-
-export function SessionPage() {
+export function SessionPage({ sessionId = '' }: SessionPageProps) {
   const [selectedTone, setSelectedTone] = useState<string>('Noir');
   const [rightPanelMode, setRightPanelMode] =
     useState<RightPanelMode>('reading');
   const [printerDropdownOpen, setPrinterDropdownOpen] = useState(false);
   const [activeLabelIndex, setActiveLabelIndex] = useState(0);
-  const [selectedPrinter, setSelectedPrinter] = useState<string | null>(
-    'PM-241-BT',
-  );
-  const [sessionState, setSessionState] = useState<SessionState>('idle');
-  const [savedTones, setSavedTones] = useState<SavedTone[]>(DEMO_SAVED_TONES);
+  const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
+  const [savedTones, setSavedTones] = useState<SavedTone[]>([]);
+
+  const stream = useSessionStream();
+  const printerHook = usePrinters();
+
+  // Map printer data to PrinterOption format
+  const printerOptions: PrinterOption[] = printerHook.printers.map(p => ({
+    name: p.name,
+    online: p.online,
+  }));
+
+  // Auto-select latest activity as it arrives
+  useEffect(() => {
+    if (stream.activities.length > 0) {
+      setActiveLabelIndex(stream.activities.length - 1);
+    }
+  }, [stream.activities.length]);
 
   const handlePlay = useCallback(() => {
-    setSessionState('streaming');
-  }, []);
+    if (stream.sessionState === 'paused') {
+      stream.resume();
+    } else {
+      stream.play(sessionId, selectedTone.toLowerCase());
+    }
+  }, [sessionId, selectedTone, stream]);
 
   const handlePause = useCallback(() => {
-    setSessionState('paused');
-  }, []);
+    stream.pause();
+  }, [stream]);
 
   const handleStop = useCallback(() => {
-    setSessionState('idle');
-  }, []);
+    stream.stop();
+    setActiveLabelIndex(0);
+  }, [stream]);
 
   const handleAddTone = useCallback(() => {
     setRightPanelMode((prev) =>
@@ -174,20 +99,60 @@ export function SessionPage() {
     setPrinterDropdownOpen(false);
   }, []);
 
-  const selectedPrinterData = DEMO_PRINTERS.find(
+  const handleScanPrinters = useCallback(() => {
+    printerHook.scan();
+  }, [printerHook]);
+
+  // Derive the active activity for the reading pane
+  const activeActivity = stream.activities[activeLabelIndex] ?? null;
+
+  // Derive selected printer data
+  const selectedPrinterData = printerOptions.find(
     (p) => p.name === selectedPrinter,
   );
+
+  // All tones: defaults + saved custom tones
+  const allTones = [...DEFAULT_TONES, ...savedTones.map(t => t.name)];
+
+  // Format time from createTime or use index
+  const formatTime = (activity: typeof stream.activities[0]) => {
+    if (activity.createTime) {
+      try {
+        return new Date(activity.createTime).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      } catch {
+        // fall through
+      }
+    }
+    return `#${activity.index + 1}`;
+  };
+
+  // Map activity type to display label
+  const formatEventType = (activityType: string) => {
+    const map: Record<string, string> = {
+      changeSet: 'CODE',
+      planGenerated: 'PLAN',
+      planApproved: 'PLAN',
+      agentMessaged: 'MSG',
+      userMessaged: 'MSG',
+      progressUpdated: 'PROGRESS',
+    };
+    return map[activityType] || activityType.toUpperCase();
+  };
 
   return (
     <>
       <TopBar
-        sessionId="7058525"
-        sessionTitle="Debugging Core Dump"
-        sessionState={sessionState}
+        sessionId={sessionId || undefined}
+        sessionTitle={stream.sessionInfo?.title || (sessionId ? 'Loading...' : undefined)}
+        sessionState={stream.sessionState}
         onPlay={handlePlay}
         onPause={handlePause}
         onStop={handleStop}
         onSessionClose={() => {
+          stream.stop();
           window.location.href = '/';
         }}
       />
@@ -195,7 +160,7 @@ export function SessionPage() {
         {/* Left panel: tone bar + timeline */}
         <main className="w-[55%] bg-[#16161a] flex flex-col relative border-r border-[#2a2a35]">
           <ToneBar
-            tones={DEFAULT_TONES}
+            tones={allTones}
             selectedTone={selectedTone}
             onSelectTone={setSelectedTone}
             onAddTone={handleAddTone}
@@ -203,21 +168,46 @@ export function SessionPage() {
           />
           <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-12">
             <div className="flex flex-col gap-[40px] w-full pt-8 px-8">
-              {DEMO_LABELS.map((label, index) => (
-                <TimelineEntry
-                  key={label.id}
-                  time={label.time}
-                  eventType={label.eventType}
-                  active={index === activeLabelIndex}
-                >
-                  <LabelCard
-                    selected={index === activeLabelIndex}
-                    onClick={() => setActiveLabelIndex(index)}
+              {stream.activities.length === 0 && stream.sessionState === 'idle' ? (
+                <div className="flex items-center justify-center h-64 text-[#72728a] text-sm">
+                  Press Play to start streaming
+                </div>
+              ) : stream.activities.length === 0 && stream.sessionState === 'streaming' ? (
+                <div className="flex items-center justify-center h-64 text-[#72728a] text-sm">
+                  Waiting for activities...
+                </div>
+              ) : (
+                stream.activities.map((activity, index) => (
+                  <TimelineEntry
+                    key={activity.activityId}
+                    time={formatTime(activity)}
+                    eventType={formatEventType(activity.activityType)}
+                    active={index === activeLabelIndex}
                   >
-                    {label.content}
-                  </LabelCard>
-                </TimelineEntry>
-              ))}
+                    <LabelCard
+                      selected={index === activeLabelIndex}
+                      onClick={() => setActiveLabelIndex(index)}
+                    >
+                      {activity.imageUrl ? (
+                        <img
+                          src={activity.imageUrl}
+                          alt={activity.summary}
+                          className="w-full h-full object-contain"
+                        />
+                      ) : (
+                        <div className="flex items-center justify-center h-full p-6">
+                          <div className="animate-pulse flex flex-col gap-3 w-full">
+                            <div className="h-3 bg-gray-200 rounded w-2/3" />
+                            <div className="h-2 bg-gray-200 rounded w-1/3" />
+                            <div className="h-8 bg-gray-200 rounded w-full mt-4" />
+                            <div className="h-8 bg-gray-200 rounded w-5/6" />
+                          </div>
+                        </div>
+                      )}
+                    </LabelCard>
+                  </TimelineEntry>
+                ))
+              )}
             </div>
           </div>
         </main>
@@ -227,27 +217,20 @@ export function SessionPage() {
           {rightPanelMode === 'reading' ? (
             <ReadingPane
               toneName={selectedTone}
-              summary="The authentication module walked in wearing a trench coat. It refactored the handshake protocol and didn't leave a forwarding address."
-              files={[
-                {
-                  status: 'M',
-                  path: 'src/api-client.ts',
-                  additions: 34,
-                  deletions: 9,
-                },
-                {
-                  status: 'M',
-                  path: 'src/session.ts',
-                  additions: 13,
-                  deletions: 4,
-                },
-                {
-                  status: 'A',
-                  path: 'src/types.ts',
-                  additions: 10,
-                  deletions: 0,
-                },
-              ]}
+              summary={
+                activeActivity?.summary ||
+                (stream.sessionState === 'idle'
+                  ? 'Select a tone and press Play to begin streaming.'
+                  : 'Waiting for data...')
+              }
+              files={
+                activeActivity?.files.map(f => ({
+                  status: 'M' as const,
+                  path: f.path,
+                  additions: f.additions,
+                  deletions: f.deletions,
+                })) ?? []
+              }
             />
           ) : (
             <ToneCreator
@@ -272,10 +255,10 @@ export function SessionPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <PrinterDropdown
-              printers={DEMO_PRINTERS}
+              printers={printerOptions}
               selectedPrinter={selectedPrinter}
               onSelectPrinter={handlePrinterSelect}
-              onScan={() => {}}
+              onScan={handleScanPrinters}
             />
           </div>
         </div>
@@ -284,8 +267,8 @@ export function SessionPage() {
       <StatusBar
         printerName={selectedPrinter}
         printerOnline={selectedPrinterData?.online ?? false}
-        labelCount={DEMO_LABELS.length}
-        printedCount={DEMO_LABELS.length}
+        labelCount={stream.activities.length}
+        printedCount={0}
         onPrinterClick={() => setPrinterDropdownOpen((prev) => !prev)}
       />
     </>
