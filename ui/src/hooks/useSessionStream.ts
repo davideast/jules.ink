@@ -17,6 +17,7 @@ export interface ProcessedActivity {
   commitMessage?: string;
   createTime?: string;
   imageUrl?: string;
+  tone?: string;
 }
 
 export interface UseSessionStreamReturn {
@@ -27,6 +28,7 @@ export interface UseSessionStreamReturn {
   pause: () => void;
   resume: () => void;
   stop: () => void;
+  setTone: (tone: string) => void;
   error: string | null;
 }
 
@@ -79,6 +81,7 @@ export function useSessionStream(): UseSessionStreamReturn {
         files: data.files,
         commitMessage: data.commitMessage,
         createTime: data.createTime,
+        tone: toneRef.current,
       };
       setActivities((prev) => [...prev, activity]);
 
@@ -175,5 +178,9 @@ export function useSessionStream(): UseSessionStreamReturn {
     }
   }, [closeEventSource]);
 
-  return { sessionInfo, activities, sessionState, play, pause, resume, stop, error };
+  const setTone = useCallback((tone: string) => {
+    toneRef.current = tone;
+  }, []);
+
+  return { sessionInfo, activities, sessionState, play, pause, resume, stop, setTone, error };
 }

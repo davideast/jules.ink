@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { TopBar } from '../TopBar';
 import type { SessionState } from '../TopBar';
 import { ToneBar } from '../ToneBar';
@@ -12,6 +12,10 @@ import { PrinterDropdown } from '../PrinterDropdown';
 import type { PrinterOption } from '../PrinterDropdown';
 import { useSessionStream } from '../../hooks/useSessionStream';
 import { usePrinters } from '../../hooks/usePrinters';
+import {
+  type PrintStack,
+  savePrintStack,
+} from '../../lib/print-stack';
 
 type RightPanelMode = 'reading' | 'creating';
 
@@ -36,6 +40,9 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
   const [activeLabelIndex, setActiveLabelIndex] = useState(0);
   const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
   const [savedTones, setSavedTones] = useState<SavedTone[]>([]);
+  const [currentStackId, setCurrentStackId] = useState<string | null>(null);
+
+  const stackMetadataRef = useRef<{ startedAt: string; tone: string; repo: string } | null>(null);
 
   const stream = useSessionStream();
   const printerHook = usePrinters();
@@ -53,10 +60,59 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
     }
   }, [stream.activities.length]);
 
+  // Update tone in stream when selectedTone changes
+  useEffect(() => {
+    stream.setTone(selectedTone.toLowerCase());
+  }, [selectedTone, stream]);
+
+  // Persist activities to PrintStack
+  useEffect(() => {
+    if (!currentStackId || !stackMetadataRef.current) return;
+
+    // Update repo if we have it now
+    if (stream.sessionInfo?.repo && !stackMetadataRef.current.repo) {
+       stackMetadataRef.current.repo = stream.sessionInfo.repo;
+    }
+
+    const activitiesToSave = stream.activities.map(
+      ({ imageUrl, ...rest }) => rest,
+    );
+    const updatedStack: PrintStack = {
+      id: currentStackId,
+      sessionId: stream.sessionInfo?.sessionId || sessionId,
+      tone: stackMetadataRef.current.tone,
+      repo: stackMetadataRef.current.repo,
+      startedAt: stackMetadataRef.current.startedAt,
+      activities: activitiesToSave,
+    };
+    savePrintStack(updatedStack).catch((err) => console.error('Failed to save stack', err));
+  }, [currentStackId, stream.activities, stream.sessionInfo, sessionId]);
+
   const handlePlay = useCallback(() => {
     if (stream.sessionState === 'paused') {
       stream.resume();
     } else {
+      const newStackId = crypto.randomUUID();
+      const startedAt = new Date().toISOString();
+      const repo = stream.sessionInfo?.repo || '';
+
+      stackMetadataRef.current = {
+        startedAt,
+        tone: selectedTone,
+        repo
+      };
+
+      const newStack: PrintStack = {
+        id: newStackId,
+        sessionId: sessionId,
+        tone: selectedTone,
+        repo: repo,
+        startedAt: startedAt,
+        activities: [],
+      };
+      savePrintStack(newStack).catch((err) => console.error('Failed to save initial stack', err));
+      setCurrentStackId(newStackId);
+
       stream.play(sessionId, selectedTone.toLowerCase());
     }
   }, [sessionId, selectedTone, stream]);
@@ -66,6 +122,7 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
   }, [stream]);
 
   const handleStop = useCallback(() => {
+    setCurrentStackId(null);
     stream.stop();
     setActiveLabelIndex(0);
   }, [stream]);
@@ -165,6 +222,7 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
             onSelectTone={setSelectedTone}
             onAddTone={handleAddTone}
             addButtonActive={rightPanelMode === 'creating'}
+            disabled={stream.sessionState === 'streaming'}
           />
           <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-12">
             <div className="flex flex-col gap-[40px] w-full pt-8 px-8">
@@ -216,7 +274,7 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
         <aside className="w-[45%] bg-sidebar-bg flex flex-col relative h-full">
           {rightPanelMode === 'reading' ? (
             <ReadingPane
-              toneName={selectedTone}
+              toneName={activeActivity?.tone || selectedTone}
               summary={
                 activeActivity?.summary ||
                 (stream.sessionState === 'idle'

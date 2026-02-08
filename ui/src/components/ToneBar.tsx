@@ -6,6 +6,7 @@ export interface ToneBarProps {
   onSelectTone?: (tone: string) => void;
   onAddTone?: () => void;
   addButtonActive?: boolean;
+  disabled?: boolean;
 }
 
 export function ToneBar({
@@ -14,6 +15,7 @@ export function ToneBar({
   onSelectTone,
   onAddTone,
   addButtonActive = false,
+  disabled = false,
 }: ToneBarProps) {
   return (
     <div className="shrink-0 flex justify-center py-6 w-full z-10 border-b border-[#2a2a35]/50 bg-[#16161a]">
@@ -23,16 +25,20 @@ export function ToneBar({
             key={tone}
             label={tone}
             selected={tone === selectedTone}
-            onClick={() => onSelectTone?.(tone)}
+            disabled={disabled}
+            onClick={() => !disabled && onSelectTone?.(tone)}
           />
         ))}
         <button
+          disabled={disabled}
           className={
-            addButtonActive
+            disabled
+              ? 'w-8 h-8 flex items-center justify-center rounded-full border border-dashed border-[#2a2a32] text-slate-gray transition-colors shrink-0 opacity-50 cursor-not-allowed'
+              : addButtonActive
               ? 'w-8 h-8 flex items-center justify-center rounded-full bg-[#fbfbfe] text-[#16161a] shadow-sm transition-colors shrink-0'
               : 'w-8 h-8 flex items-center justify-center rounded-full border border-dashed border-[#2a2a32] text-slate-gray hover:text-soft-white hover:border-slate-gray transition-colors shrink-0'
           }
-          onClick={onAddTone}
+          onClick={disabled ? undefined : onAddTone}
         >
           <span className="material-symbols-outlined text-lg">add</span>
         </button>
