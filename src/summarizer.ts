@@ -156,7 +156,7 @@ export class SessionSummarizer {
   // ... (getLabelData, executeRequest, etc. remain exactly the same) ...
   public getLabelData(activity: Activity) {
     const changeSetArtifact = activity.artifacts?.find(a => a.type === 'changeSet');
-    if (!changeSetArtifact || changeSetArtifact.type !== 'changeSet' || !changeSetArtifact.gitPatch) return [];
+    if (!changeSetArtifact || !changeSetArtifact.gitPatch) return [];
     const files = parseDiff(changeSetArtifact.gitPatch.unidiffPatch);
     return files
       .filter(f => !micromatch.isMatch(f.to || f.from || '', IGNORE_PATTERNS))
@@ -210,7 +210,7 @@ export class SessionSummarizer {
 
     // 1. Code Changes
     const changeSet = activity.artifacts?.find(a => a.type === 'changeSet');
-    if (changeSet && changeSet.type === 'changeSet' && changeSet.gitPatch) {
+    if (changeSet && changeSet.gitPatch) {
       return {
         ...base,
         context: this.buildSmartContext(changeSet.gitPatch.unidiffPatch),

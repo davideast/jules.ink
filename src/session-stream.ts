@@ -99,9 +99,7 @@ export async function* streamSession(
 
       // Extract commit message if available
       const changeSet = activity.artifacts?.find(a => a.type === 'changeSet');
-      const commitMessage = changeSet?.type === 'changeSet'
-        ? changeSet.gitPatch?.suggestedCommitMessage
-        : undefined;
+      const commitMessage = changeSet?.gitPatch?.suggestedCommitMessage;
 
       yield {
         type: 'activity:processed',
