@@ -1,8 +1,10 @@
 ---
 import AppLayout from '../layouts/AppLayout.astro';
 import { SessionPage } from '../components/pages/SessionPage';
+
+const sessionId = Astro.url.searchParams.get('id') || '';
 ---
 
 <AppLayout title="Jules Ink — Session">
-  <SessionPage client:load />
+  <SessionPage client:load sessionId={sessionId} />
 </AppLayout>
