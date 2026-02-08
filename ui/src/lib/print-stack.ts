@@ -16,35 +16,38 @@ export interface PrintStack {
   }[];
 }
 
-const STORAGE_KEY = 'jules-ink:print-stacks';
-
-export function loadPrintStacks(): PrintStack[] {
+export async function loadPrintStacks(): Promise<PrintStack[]> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as PrintStack[];
+    const res = await fetch('/api/print-stack');
+    if (!res.ok) throw new Error('Failed to load stacks');
+    return await res.json();
   } catch (e) {
     console.error('Failed to load print stacks', e);
     return [];
   }
 }
 
-export function savePrintStack(stack: PrintStack): void {
+export async function savePrintStack(stack: PrintStack): Promise<void> {
   try {
-    const stacks = loadPrintStacks();
-    const index = stacks.findIndex((s) => s.id === stack.id);
-    if (index >= 0) {
-      stacks[index] = stack;
-    } else {
-      stacks.push(stack);
-    }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(stacks));
+    const res = await fetch('/api/print-stack', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(stack),
+    });
+    if (!res.ok) throw new Error('Failed to save stack');
   } catch (e) {
     console.error('Failed to save print stack', e);
   }
 }
 
-export function getPrintStack(id: string): PrintStack | null {
-  const stacks = loadPrintStacks();
-  return stacks.find((s) => s.id === id) || null;
+export async function getPrintStack(id: string): Promise<PrintStack | null> {
+  try {
+    const res = await fetch(`/api/print-stack/${id}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Failed to get stack');
+    return await res.json();
+  } catch (e) {
+    console.error('Failed to get print stack', e);
+    return null;
+  }
 }

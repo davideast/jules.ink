@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { TopBar } from '../TopBar';
 import type { SessionState } from '../TopBar';
 import { ToneBar } from '../ToneBar';
@@ -15,7 +15,6 @@ import { usePrinters } from '../../hooks/usePrinters';
 import {
   type PrintStack,
   savePrintStack,
-  getPrintStack,
 } from '../../lib/print-stack';
 
 type RightPanelMode = 'reading' | 'creating';
@@ -43,6 +42,8 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
   const [savedTones, setSavedTones] = useState<SavedTone[]>([]);
   const [currentStackId, setCurrentStackId] = useState<string | null>(null);
 
+  const stackMetadataRef = useRef<{ startedAt: string; tone: string; repo: string } | null>(null);
+
   const stream = useSessionStream();
   const printerHook = usePrinters();
 
@@ -66,37 +67,50 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
 
   // Persist activities to PrintStack
   useEffect(() => {
-    if (!currentStackId) return;
+    if (!currentStackId || !stackMetadataRef.current) return;
 
-    const currentStack = getPrintStack(currentStackId);
-    if (currentStack) {
-      const activitiesToSave = stream.activities.map(
-        ({ imageUrl, ...rest }) => rest,
-      );
-      const updatedStack: PrintStack = {
-        ...currentStack,
-        repo: stream.sessionInfo?.repo || currentStack.repo,
-        sessionId: stream.sessionInfo?.sessionId || currentStack.sessionId,
-        activities: activitiesToSave,
-      };
-      savePrintStack(updatedStack);
+    // Update repo if we have it now
+    if (stream.sessionInfo?.repo && !stackMetadataRef.current.repo) {
+       stackMetadataRef.current.repo = stream.sessionInfo.repo;
     }
-  }, [currentStackId, stream.activities, stream.sessionInfo]);
+
+    const activitiesToSave = stream.activities.map(
+      ({ imageUrl, ...rest }) => rest,
+    );
+    const updatedStack: PrintStack = {
+      id: currentStackId,
+      sessionId: stream.sessionInfo?.sessionId || sessionId,
+      tone: stackMetadataRef.current.tone,
+      repo: stackMetadataRef.current.repo,
+      startedAt: stackMetadataRef.current.startedAt,
+      activities: activitiesToSave,
+    };
+    savePrintStack(updatedStack).catch((err) => console.error('Failed to save stack', err));
+  }, [currentStackId, stream.activities, stream.sessionInfo, sessionId]);
 
   const handlePlay = useCallback(() => {
     if (stream.sessionState === 'paused') {
       stream.resume();
     } else {
       const newStackId = crypto.randomUUID();
+      const startedAt = new Date().toISOString();
+      const repo = stream.sessionInfo?.repo || '';
+
+      stackMetadataRef.current = {
+        startedAt,
+        tone: selectedTone,
+        repo
+      };
+
       const newStack: PrintStack = {
         id: newStackId,
         sessionId: sessionId,
         tone: selectedTone,
-        repo: stream.sessionInfo?.repo || '',
-        startedAt: new Date().toISOString(),
+        repo: repo,
+        startedAt: startedAt,
         activities: [],
       };
-      savePrintStack(newStack);
+      savePrintStack(newStack).catch((err) => console.error('Failed to save initial stack', err));
       setCurrentStackId(newStackId);
 
       stream.play(sessionId, selectedTone.toLowerCase());
