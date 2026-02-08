@@ -14,7 +14,7 @@ export const LabelCard = memo(function LabelCard({
   return (
     <div
       className={[
-        'label-card p-6 flex flex-col justify-between text-black shrink-0',
+        'label-card flex flex-col justify-between text-black shrink-0 overflow-hidden',
         selected ? '' : 'opacity-80 hover:opacity-100 transition-opacity',
       ]
         .filter(Boolean)
