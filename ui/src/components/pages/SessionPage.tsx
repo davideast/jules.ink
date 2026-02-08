@@ -208,6 +208,7 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
             onSelectTone={setSelectedTone}
             onAddTone={handleAddTone}
             addButtonActive={rightPanelMode === 'creating'}
+            disabled={stream.sessionState === 'streaming'}
           />
           <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-12">
             <div className="flex flex-col gap-[40px] w-full pt-8 px-8">
