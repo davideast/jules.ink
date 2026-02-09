@@ -41,6 +41,7 @@ export function useSessionStream(): UseSessionStreamReturn {
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string>('');
   const toneRef = useRef<string | undefined>(undefined);
+  const modelRef = useRef<string | undefined>(undefined);
   const sessionInfoRef = useRef<SessionInfo | null>(null);
 
   const closeEventSource = useCallback(() => {
@@ -50,12 +51,13 @@ export function useSessionStream(): UseSessionStreamReturn {
     }
   }, []);
 
-  const connect = useCallback((sessionId: string, tone?: string, afterIndex?: number) => {
+  const connect = useCallback((sessionId: string, tone?: string, model?: string, afterIndex?: number) => {
     closeEventSource();
     setError(null);
 
     const params = new URLSearchParams();
     if (tone) params.set('tone', tone);
+    if (model) params.set('model', model);
     if (afterIndex !== undefined && afterIndex >= 0) params.set('afterIndex', String(afterIndex));
     const qs = params.toString();
     const url = `/api/session/${encodeURIComponent(sessionId)}/stream${qs ? `?${qs}` : ''}`;
@@ -133,12 +135,13 @@ export function useSessionStream(): UseSessionStreamReturn {
     };
   }, [closeEventSource]);
 
-  const play = useCallback((sessionId: string, tone?: string) => {
+  const play = useCallback((sessionId: string, tone?: string, model?: string) => {
     sessionIdRef.current = sessionId;
     toneRef.current = tone;
+    modelRef.current = model;
     setActivities([]);
     setSessionInfo(null);
-    connect(sessionId, tone);
+    connect(sessionId, tone, model);
   }, [connect]);
 
   const pause = useCallback(() => {
@@ -155,12 +158,13 @@ export function useSessionStream(): UseSessionStreamReturn {
   const resume = useCallback(() => {
     const sessionId = sessionIdRef.current;
     const tone = toneRef.current;
+    const model = modelRef.current;
     if (!sessionId) return;
 
     // Resume from where we left off
     setActivities((prev) => {
       const lastIndex = prev.length > 0 ? prev[prev.length - 1].index : -1;
-      connect(sessionId, tone, lastIndex);
+      connect(sessionId, tone, model, lastIndex);
       return prev;
     });
   }, [connect]);

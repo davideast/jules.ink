@@ -5,6 +5,7 @@ import { ToneBar } from '../ToneBar';
 import { TimelineEntry } from '../TimelineEntry';
 import { LabelCard } from '../LabelCard';
 import { LabelPreview } from '../LabelPreview';
+import { ModelSelector } from '../ModelSelector';
 import { ReadingPane } from '../ReadingPane';
 import { ToneCreator } from '../ToneCreator';
 import type { SavedTone } from '../ToneCreator';
@@ -50,6 +51,7 @@ export function SessionPage({
     useState<RightPanelMode>('reading');
   const [printerDropdownOpen, setPrinterDropdownOpen] = useState(false);
   const [activeLabelIndex, setActiveLabelIndex] = useState(0);
+  const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash-lite');
   const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
   const [currentStackId, setCurrentStackId] = useState<string | null>(null);
 
@@ -125,9 +127,9 @@ export function SessionPage({
       savePrintStack(newStack).catch((err) => console.error('Failed to save initial stack', err));
       setCurrentStackId(newStackId);
 
-      stream.play(sessionId, selectedTone.toLowerCase());
+      stream.play(sessionId, selectedTone.toLowerCase(), selectedModel);
     }
-  }, [sessionId, selectedTone, stream]);
+  }, [sessionId, selectedTone, selectedModel, stream]);
 
   const handlePause = useCallback(() => {
     stream.pause();
@@ -226,7 +228,13 @@ export function SessionPage({
           window.location.href = '/';
         }}
         onSettings={() => { window.location.href = '/settings'; }}
-      />
+      >
+        <ModelSelector
+          selectedModel={selectedModel}
+          onModelChange={setSelectedModel}
+          disabled={stream.sessionState === 'streaming'}
+        />
+      </TopBar>
       <div className="flex flex-1 overflow-hidden">
         {/* Left panel: tone bar + timeline */}
         <main className="w-[55%] bg-[#16161a] flex flex-col relative border-r border-[#2a2a35]">

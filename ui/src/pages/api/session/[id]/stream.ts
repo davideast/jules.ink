@@ -5,9 +5,10 @@ export const GET: APIRoute = async ({ params, request }) => {
   const sessionId = params.id!;
   const url = new URL(request.url);
   const tone = url.searchParams.get('tone') || undefined;
+  const model = url.searchParams.get('model') || undefined;
   const afterIndex = parseInt(url.searchParams.get('afterIndex') || '-1', 10);
 
-  console.log(`[SSE] Stream request: session=${sessionId}, tone=${tone}, afterIndex=${afterIndex}`);
+  console.log(`[SSE] Stream request: session=${sessionId}, tone=${tone}, model=${model}, afterIndex=${afterIndex}`);
 
   // Dynamic import to avoid Vite statically resolving the workspace package
   let streamSession: typeof import('jules-ink')['streamSession'];
@@ -45,6 +46,7 @@ export const GET: APIRoute = async ({ params, request }) => {
         console.log(`[SSE] Starting streamSession for ${sessionId}...`);
         for await (const event of streamSession(sessionId, {
           tone,
+          model,
           signal: activeSession.controller.signal,
           afterIndex,
         })) {
