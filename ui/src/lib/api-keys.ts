@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '../../../');
+const ROOT_DIR = process.env.JULES_INK_ROOT || path.resolve(__dirname, '../../../');
 const ENV_PATH = path.join(ROOT_DIR, '.env');
 
 export async function readEnv(): Promise<Map<string, string>> {

@@ -126,21 +126,27 @@ program
 
 program
   .command('ui')
-  .description('Start the UI and API server for local development')
+  .description('Start the UI and API server')
   .option('--api-port <port>', 'API server port', '3000')
-  .option('--ui-port <port>', 'UI dev server port', '4321')
+  .option('--ui-port <port>', 'UI server port', '4321')
   .action(async (options) => {
     const apiPort = parseInt(options.apiPort);
     const uiPort = parseInt(options.uiPort);
-    const uiDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
+    const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const uiSrcDir = path.join(pkgRoot, 'ui', 'src');
+    const uiDistDir = path.join(pkgRoot, 'ui', 'dist');
+    const devMode = fs.existsSync(uiSrcDir);
 
-    if (!fs.existsSync(uiDir)) {
-      console.error('ui/ directory not found. Run this command from the jules-ink repo.');
+    if (!devMode && !fs.existsSync(uiDistDir)) {
+      console.error('Neither ui/src/ nor ui/dist/ found. Is the package installed correctly?');
       process.exit(1);
     }
 
-    // Load saved API keys from .env so they survive server restarts
-    const rootDir = path.resolve(uiDir, '..');
+    // Set JULES_INK_ROOT so Astro API routes can find .env and .jules/
+    const rootDir = devMode ? pkgRoot : process.cwd();
+    process.env.JULES_INK_ROOT = rootDir;
+
+    // Load .env from the root directory
     const { config } = await import('dotenv');
     config({ path: path.join(rootDir, '.env') });
 
@@ -152,18 +158,38 @@ program
       console.log(`API server running at http://localhost:${info.port}`);
     });
 
-    // Start Astro dev server via programmatic API
-    const { dev } = await import('astro');
-    const devServer = await dev({ root: uiDir, server: { port: uiPort } });
+    if (devMode) {
+      // Dev mode: Astro dev server with HMR
+      const { dev } = await import('astro');
+      const devServer = await dev({ root: path.join(pkgRoot, 'ui'), server: { port: uiPort } });
 
-    const cleanup = async () => {
-      await devServer.stop();
-      server.close();
-      process.exit();
-    };
+      const cleanup = async () => {
+        await devServer.stop();
+        server.close();
+        process.exit();
+      };
+      process.on('SIGINT', cleanup);
+      process.on('SIGTERM', cleanup);
+    } else {
+      // Production mode: serve pre-built Astro output
+      // Prevent @astrojs/node from auto-starting its own listener
+      process.env.ASTRO_NODE_AUTOSTART = 'disabled';
+      const entryPath = path.join(uiDistDir, 'server', 'entry.mjs');
+      const { handler } = await import(entryPath);
+      const http = await import('node:http');
+      const uiServer = http.createServer(handler);
+      uiServer.listen(uiPort, () => {
+        console.log(`UI server running at http://localhost:${uiPort}`);
+      });
 
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
+      const cleanup = () => {
+        uiServer.close();
+        server.close();
+        process.exit();
+      };
+      process.on('SIGINT', cleanup);
+      process.on('SIGTERM', cleanup);
+    }
   });
 
 // Only parse when run directly as the CLI entry point
