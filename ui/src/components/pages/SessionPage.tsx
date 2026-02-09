@@ -4,6 +4,7 @@ import type { SessionState } from '../TopBar';
 import { ToneBar } from '../ToneBar';
 import { TimelineEntry } from '../TimelineEntry';
 import { LabelCard } from '../LabelCard';
+import { LabelPreview } from '../LabelPreview';
 import { ReadingPane } from '../ReadingPane';
 import { ToneCreator } from '../ToneCreator';
 import type { SavedTone } from '../ToneCreator';
@@ -259,22 +260,12 @@ export function SessionPage({
                       selected={index === activeLabelIndex}
                       onClick={() => setActiveLabelIndex(index)}
                     >
-                      {activity.imageUrl ? (
-                        <img
-                          src={activity.imageUrl}
-                          alt={activity.summary}
-                          className="w-full h-full object-contain"
-                        />
-                      ) : (
-                        <div className="flex items-center justify-center h-full p-6">
-                          <div className="animate-pulse flex flex-col gap-3 w-full">
-                            <div className="h-3 bg-gray-200 rounded w-2/3" />
-                            <div className="h-2 bg-gray-200 rounded w-1/3" />
-                            <div className="h-8 bg-gray-200 rounded w-full mt-4" />
-                            <div className="h-8 bg-gray-200 rounded w-5/6" />
-                          </div>
-                        </div>
-                      )}
+                      <LabelPreview
+                        repo={stream.sessionInfo?.repo || sessionRepo || ''}
+                        sessionId={sessionId}
+                        summary={activity.summary}
+                        files={activity.files}
+                      />
                     </LabelCard>
                   </TimelineEntry>
                 ))
