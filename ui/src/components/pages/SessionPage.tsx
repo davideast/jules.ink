@@ -213,6 +213,7 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
           stream.stop();
           window.location.href = '/';
         }}
+        onSettings={() => { window.location.href = '/settings'; }}
       />
       <div className="flex flex-1 overflow-hidden">
         {/* Left panel: tone bar + timeline */}
