@@ -12,6 +12,7 @@ import { PrinterDropdown } from '../PrinterDropdown';
 import type { PrinterOption } from '../PrinterDropdown';
 import { useSessionStream } from '../../hooks/useSessionStream';
 import { usePrinters } from '../../hooks/usePrinters';
+import { useTones } from '../../hooks/useTones';
 import {
   type PrintStack,
   savePrintStack,
@@ -39,13 +40,13 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
   const [printerDropdownOpen, setPrinterDropdownOpen] = useState(false);
   const [activeLabelIndex, setActiveLabelIndex] = useState(0);
   const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
-  const [savedTones, setSavedTones] = useState<SavedTone[]>([]);
   const [currentStackId, setCurrentStackId] = useState<string | null>(null);
 
   const stackMetadataRef = useRef<{ startedAt: string; tone: string; repo: string } | null>(null);
 
   const stream = useSessionStream();
   const printerHook = usePrinters();
+  const { tones: savedTones, save: saveTone, remove: removeTone } = useTones();
 
   // Map printer data to PrinterOption format
   const printerOptions: PrinterOption[] = printerHook.printers.map(p => ({
@@ -136,15 +137,15 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
   const handleSaveTone = useCallback(
     (name: string, instructions: string) => {
       if (!name.trim()) return;
-      setSavedTones((prev) => [...prev, { name, instructions }]);
+      saveTone(name, instructions);
       setRightPanelMode('reading');
     },
-    [],
+    [saveTone],
   );
 
   const handleDeleteTone = useCallback((name: string) => {
-    setSavedTones((prev) => prev.filter((t) => t.name !== name));
-  }, []);
+    removeTone(name);
+  }, [removeTone]);
 
   const handleSelectSavedTone = useCallback((name: string) => {
     setSelectedTone(name);
