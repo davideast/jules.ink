@@ -1,4 +1,4 @@
-import { jules, type Activity } from '@google/jules-sdk';
+import type { Activity } from '@google/jules-sdk';
 import { analyzeChangeSet } from './analyzer.js';
 import { ChangeSetSummary } from './types.js';
 
@@ -27,6 +27,8 @@ export async function* streamChangeMetrics(
   options: StreamMetricsOptions = {}
 ): AsyncGenerator<ProcessedActivity> {
   const { live = true } = options;
+  const { connect } = await import('@google/jules-sdk');
+  const jules = connect();
   const session = jules.session(sessionId);
 
   // Choose between the infinite stream or the finite history

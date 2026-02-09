@@ -5,19 +5,9 @@ export const GET: APIRoute = async ({ request }) => {
   const pageSize = parseInt(url.searchParams.get('pageSize') || '25', 10);
   const pageToken = url.searchParams.get('pageToken') || undefined;
 
-  let jules: typeof import('@google/jules-sdk')['jules'];
   try {
-    const mod = await import('@google/jules-sdk');
-    jules = mod.jules;
-  } catch (err) {
-    console.error('[API] Failed to load jules-sdk:', err);
-    return new Response(
-      JSON.stringify({ error: 'Failed to load jules-sdk' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } },
-    );
-  }
-
-  try {
+    const { connect } = await import('@google/jules-sdk');
+    const jules = connect();
     const page = await jules.sessions({ pageSize, pageToken });
 
     const sessions = page.sessions.map((s) => {

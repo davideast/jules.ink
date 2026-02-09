@@ -12,7 +12,8 @@ let initialError: string | null = null;
 
 if (keysConfigured) {
   try {
-    const { jules } = await import('@google/jules-sdk');
+    const { connect } = await import('@google/jules-sdk');
+    const jules = connect();
     const page = await jules.sessions({ pageSize: 25 });
 
     initialSessions = page.sessions.map((s: any) => {

@@ -9,7 +9,8 @@ const model = Astro.url.searchParams.get('model') || undefined;
 let sessionMeta = null;
 if (sessionId) {
   try {
-    const { jules } = await import('@google/jules-sdk');
+    const { connect } = await import('@google/jules-sdk');
+    const jules = connect();
     const session = jules.session(sessionId);
     const info = await session.info();
     const rawState = String(info.state || '').toLowerCase();
