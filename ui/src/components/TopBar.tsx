@@ -70,6 +70,7 @@ export function TopBar({
   onPause,
   onStop,
   onSettings,
+  children,
 }: TopBarProps) {
   return (
     <header className="h-[52px] bg-sidebar-bg border-b border-[#2a2a35] flex items-center justify-between px-4 shrink-0 z-30">
@@ -98,6 +99,7 @@ export function TopBar({
       <div className="flex items-center gap-4 shrink-0">
         {sessionId ? (
           <div className="flex items-center gap-4">
+            {children}
             {/* Status indicator */}
             {sessionState === 'streaming' ? (
               <div className="flex items-center gap-2">

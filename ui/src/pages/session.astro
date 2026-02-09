@@ -3,6 +3,8 @@ import AppLayout from '../layouts/AppLayout.astro';
 import { SessionPage } from '../components/pages/SessionPage';
 
 const sessionId = Astro.url.searchParams.get('id') || '';
+const tone = Astro.url.searchParams.get('tone') || undefined;
+const model = Astro.url.searchParams.get('model') || undefined;
 
 let sessionMeta = null;
 if (sessionId) {
@@ -34,5 +36,7 @@ if (sessionId) {
     sessionRepo={sessionMeta?.repo}
     sessionStatus={sessionMeta?.status}
     sessionPrompt={sessionMeta?.prompt}
+    initialTone={tone}
+    initialModel={model}
   />
 </AppLayout>
