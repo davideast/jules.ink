@@ -17,6 +17,7 @@ export interface TopBarProps {
   onPlay?: () => void;
   onPause?: () => void;
   onStop?: () => void;
+  onSettings?: () => void;
   children?: React.ReactNode;
 }
 
@@ -54,6 +55,7 @@ export function TopBar({
   onPlay,
   onPause,
   onStop,
+  onSettings,
 }: TopBarProps) {
   return (
     <header className="h-[52px] bg-sidebar-bg border-b border-[#2a2a35] flex items-center justify-between px-4 shrink-0 z-30">
@@ -185,18 +187,31 @@ export function TopBar({
               ) : null}
             </div>
           </>
-        ) : (
+        ) : onSessionInput ? (
           <input
             className="w-[280px] h-8 bg-[#16161a] border border-[#2a2a32] rounded text-sm text-[#fbfbfe] placeholder-[#72728a] px-3 focus:outline-none focus:border-[#72728a] font-mono transition-colors"
             placeholder="Paste session ID..."
             type="text"
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
-                onSessionInput?.((e.target as HTMLInputElement).value);
+                onSessionInput((e.target as HTMLInputElement).value);
               }
             }}
           />
-        )}
+        ) : null}
+        {onSettings ? (
+          <>
+            <div className="h-4 w-px bg-[#2a2a32]" />
+            <button
+              className="text-[#72728a] hover:text-white transition-colors flex items-center"
+              onClick={onSettings}
+            >
+              <span className="material-symbols-outlined text-[18px]">
+                settings
+              </span>
+            </button>
+          </>
+        ) : null}
       </div>
     </header>
   );

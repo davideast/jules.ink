@@ -25,7 +25,10 @@ export function LandingPage() {
 
   return (
     <>
-      <TopBar onSessionInput={handleSessionInput} />
+      <TopBar
+        onSessionInput={handleSessionInput}
+        onSettings={() => { window.location.href = '/settings'; }}
+      />
       <div className="flex flex-1 flex-col overflow-hidden">
         <ToneBar
           tones={DEFAULT_TONES}

@@ -1,8 +1,16 @@
 ---
 import AppLayout from '../layouts/AppLayout.astro';
 import { LandingPage } from '../components/pages/LandingPage';
+import { SetupPage } from '../components/pages/SetupPage';
+import { checkKeysConfigured } from '../lib/api-keys';
+
+const keysConfigured = await checkKeysConfigured();
 ---
 
 <AppLayout title="jules.ink">
-  <LandingPage client:load />
+  {keysConfigured ? (
+    <LandingPage client:load />
+  ) : (
+    <SetupPage client:load />
+  )}
 </AppLayout>
