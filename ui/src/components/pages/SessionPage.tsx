@@ -5,6 +5,7 @@ import { ToneBar } from '../ToneBar';
 import { TimelineEntry } from '../TimelineEntry';
 import { LabelCard } from '../LabelCard';
 import { LabelPreview } from '../LabelPreview';
+import { LabelCardSkeleton } from '../LabelCardSkeleton';
 import { ModelSelector, MODELS } from '../ModelSelector';
 import { ReadingPane } from '../ReadingPane';
 import { ToneCreator } from '../ToneCreator';
@@ -270,26 +271,33 @@ export function SessionPage({
                   Waiting for activities...
                 </div>
               ) : (
-                stream.activities.map((activity, index) => (
-                  <TimelineEntry
-                    key={activity.activityId}
-                    time={formatTime(activity)}
-                    eventType={formatEventType(activity.activityType)}
-                    active={index === activeLabelIndex}
-                  >
-                    <LabelCard
-                      selected={index === activeLabelIndex}
-                      onClick={() => setActiveLabelIndex(index)}
+                <>
+                  {stream.activities.map((activity, index) => (
+                    <TimelineEntry
+                      key={activity.activityId}
+                      time={formatTime(activity)}
+                      eventType={formatEventType(activity.activityType)}
+                      active={index === activeLabelIndex}
                     >
-                      <LabelPreview
-                        repo={stream.sessionInfo?.repo || sessionRepo || ''}
-                        sessionId={sessionId}
-                        summary={activity.summary}
-                        files={activity.files}
-                      />
-                    </LabelCard>
-                  </TimelineEntry>
-                ))
+                      <LabelCard
+                        selected={index === activeLabelIndex}
+                        onClick={() => setActiveLabelIndex(index)}
+                      >
+                        <LabelPreview
+                          repo={stream.sessionInfo?.repo || sessionRepo || ''}
+                          sessionId={sessionId}
+                          summary={activity.summary}
+                          files={activity.files}
+                        />
+                      </LabelCard>
+                    </TimelineEntry>
+                  ))}
+                  {stream.sessionState === 'streaming' && (
+                    <TimelineEntry time="--:--" eventType="..." active={false}>
+                      <LabelCardSkeleton />
+                    </TimelineEntry>
+                  )}
+                </>
               )}
             </div>
           </div>
