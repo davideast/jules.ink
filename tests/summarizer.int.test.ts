@@ -5,7 +5,7 @@ import { SessionSummarizer } from '../src/summarizer.js';
 const runIfKey = process.env.GEMINI_API_KEY ? describe : describe.skip;
 
 runIfKey('SessionSummarizer (Integration with Gemini 2.5)', () => {
-  const summarizer = new SessionSummarizer();
+  const summarizer = new SessionSummarizer({ backend: 'cloud' });
 
   it('generates a summary within character constraints', async () => {
     const prevState = "Agent proposed a plan to update API to handle handshake intents.";

@@ -127,10 +127,11 @@ program
 program
   .command('ui')
   .description('Start the UI and API server for local development')
-  .action(async () => {
-    const { spawn } = await import('child_process');
-
-    // Resolve ui/ directory relative to this file
+  .option('--api-port <port>', 'API server port', '3000')
+  .option('--ui-port <port>', 'UI dev server port', '4321')
+  .action(async (options) => {
+    const apiPort = parseInt(options.apiPort);
+    const uiPort = parseInt(options.uiPort);
     const uiDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
 
     if (!fs.existsSync(uiDir)) {
@@ -138,29 +139,25 @@ program
       process.exit(1);
     }
 
+    // Load saved API keys from .env so they survive server restarts
+    const rootDir = path.resolve(uiDir, '..');
+    const { config } = await import('dotenv');
+    config({ path: path.join(rootDir, '.env') });
+
     // Start API server
     const { serve } = await import('@hono/node-server');
     const { default: app } = await import('./server.js');
 
-    const server = serve({ fetch: app.fetch, port: 3000 }, (info) => {
+    const server = serve({ fetch: app.fetch, port: apiPort }, (info) => {
       console.log(`API server running at http://localhost:${info.port}`);
     });
 
-    // Start Astro dev server
-    const astro = spawn('npx', ['astro', 'dev'], {
-      cwd: uiDir,
-      stdio: 'inherit',
-      shell: true,
-    });
+    // Start Astro dev server via programmatic API
+    const { dev } = await import('astro');
+    const devServer = await dev({ root: uiDir, server: { port: uiPort } });
 
-    astro.on('error', (err) => {
-      console.error('Failed to start Astro dev server:', err.message);
-      server.close();
-      process.exit(1);
-    });
-
-    const cleanup = () => {
-      astro.kill();
+    const cleanup = async () => {
+      await devServer.stop();
       server.close();
       process.exit();
     };
