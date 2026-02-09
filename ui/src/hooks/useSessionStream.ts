@@ -18,6 +18,7 @@ export interface ProcessedActivity {
   createTime?: string;
   imageUrl?: string;
   tone?: string;
+  model?: string;
 }
 
 export interface UseSessionStreamReturn {
@@ -84,6 +85,7 @@ export function useSessionStream(): UseSessionStreamReturn {
         commitMessage: data.commitMessage,
         createTime: data.createTime,
         tone: toneRef.current,
+        model: modelRef.current,
       };
       setActivities((prev) => [...prev, activity]);
 

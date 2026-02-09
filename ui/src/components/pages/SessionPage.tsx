@@ -5,7 +5,7 @@ import { ToneBar } from '../ToneBar';
 import { TimelineEntry } from '../TimelineEntry';
 import { LabelCard } from '../LabelCard';
 import { LabelPreview } from '../LabelPreview';
-import { ModelSelector } from '../ModelSelector';
+import { ModelSelector, MODELS } from '../ModelSelector';
 import { ReadingPane } from '../ReadingPane';
 import { ToneCreator } from '../ToneCreator';
 import type { SavedTone } from '../ToneCreator';
@@ -55,7 +55,7 @@ export function SessionPage({
   const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
   const [currentStackId, setCurrentStackId] = useState<string | null>(null);
 
-  const stackMetadataRef = useRef<{ startedAt: string; tone: string; repo: string } | null>(null);
+  const stackMetadataRef = useRef<{ startedAt: string; tone: string; model: string; repo: string } | null>(null);
 
   const stream = useSessionStream();
   const printerHook = usePrinters();
@@ -113,6 +113,7 @@ export function SessionPage({
       stackMetadataRef.current = {
         startedAt,
         tone: selectedTone,
+        model: selectedModel,
         repo
       };
 
@@ -287,6 +288,7 @@ export function SessionPage({
           {rightPanelMode === 'reading' ? (
             <ReadingPane
               toneName={activeActivity?.tone || selectedTone}
+              modelName={MODELS.find(m => m.id === (activeActivity?.model || selectedModel))?.name}
               summary={
                 activeActivity?.summary ||
                 (stream.sessionState === 'idle'

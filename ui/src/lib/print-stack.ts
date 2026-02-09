@@ -13,6 +13,7 @@ export interface PrintStack {
     commitMessage?: string;
     createTime?: string;
     tone?: string;
+    model?: string;
   }[];
 }
 

@@ -4,19 +4,25 @@ import type { FileStatRowProps } from './FileStatRow';
 
 export interface ReadingPaneProps {
   toneName: string;
+  modelName?: string;
   summary: string;
   files?: FileStatRowProps[];
   onShare?: () => void;
 }
 
-export function ReadingPane({ toneName, summary, files = [], onShare }: ReadingPaneProps) {
+export function ReadingPane({ toneName, modelName, summary, files = [], onShare }: ReadingPaneProps) {
   return (
     <div className="flex-1 p-[40px] overflow-y-auto custom-scrollbar">
       <div className="flex flex-col h-full">
-        <div className="flex mb-[28px]">
+        <div className="flex gap-2 mb-[28px]">
           <span className="inline-flex items-center px-3 py-1 rounded-full text-[#16161a] text-[10px] font-bold tracking-widest bg-[#fbfbfe] uppercase">
             {toneName}
           </span>
+          {modelName ? (
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-[#72728a] text-[10px] font-bold tracking-widest border border-[#2a2a35] uppercase">
+              {modelName}
+            </span>
+          ) : null}
         </div>
         <div className="mb-[28px]">
           <ReactMarkdown
