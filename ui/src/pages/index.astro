@@ -1,15 +1,53 @@
 ---
 import AppLayout from '../layouts/AppLayout.astro';
-import { LandingPage } from '../components/pages/LandingPage';
+import { SessionListPage } from '../components/pages/SessionListPage';
 import { SetupPage } from '../components/pages/SetupPage';
 import { checkKeysConfigured } from '../lib/api-keys';
 
 const keysConfigured = await checkKeysConfigured();
+
+let initialSessions: any[] = [];
+let initialNextPageToken: string | null = null;
+let initialError: string | null = null;
+
+if (keysConfigured) {
+  try {
+    const { jules } = await import('@google/jules-sdk');
+    const page = await jules.sessions({ pageSize: 25 });
+
+    initialSessions = page.sessions.map((s: any) => {
+      const rawState = String(s.state || '').toLowerCase();
+      let status: 'completed' | 'in_progress' | 'failed' = 'in_progress';
+      if (rawState === 'completed') status = 'completed';
+      else if (rawState === 'failed') status = 'failed';
+
+      const repo = s.sourceContext?.source?.replace('sources/github/', '') || '';
+
+      return {
+        id: s.id,
+        title: s.title || (s.prompt ? s.prompt.slice(0, 60) + '...' : `Session ${s.id.slice(0, 8)}`),
+        repo,
+        status,
+        createTime: s.createTime,
+        updateTime: s.updateTime,
+      };
+    });
+    initialNextPageToken = page.nextPageToken || null;
+  } catch (err: any) {
+    console.error('[SSR] Failed to load sessions:', err);
+    initialError = err.message || 'Failed to load sessions';
+  }
+}
 ---
 
 <AppLayout title="jules.ink">
   {keysConfigured ? (
-    <LandingPage client:load />
+    <SessionListPage
+      client:load
+      initialSessions={initialSessions}
+      initialNextPageToken={initialNextPageToken}
+      initialError={initialError}
+    />
   ) : (
     <SetupPage client:load />
   )}

@@ -3,8 +3,36 @@ import AppLayout from '../layouts/AppLayout.astro';
 import { SessionPage } from '../components/pages/SessionPage';
 
 const sessionId = Astro.url.searchParams.get('id') || '';
+
+let sessionMeta = null;
+if (sessionId) {
+  try {
+    const { jules } = await import('@google/jules-sdk');
+    const session = jules.session(sessionId);
+    const info = await session.info();
+    const rawState = String(info.state || '').toLowerCase();
+    let status: 'completed' | 'in_progress' | 'failed' = 'in_progress';
+    if (rawState === 'completed') status = 'completed';
+    else if (rawState === 'failed') status = 'failed';
+    sessionMeta = {
+      title: info.title || '',
+      repo: info.sourceContext?.source?.replace('sources/github/', '') || '',
+      status,
+      prompt: info.prompt || '',
+    };
+  } catch (err: any) {
+    console.error('[SSR] Failed to load session info:', err);
+  }
+}
 ---
 
-<AppLayout title="Jules Ink — Session">
-  <SessionPage client:load sessionId={sessionId} />
+<AppLayout title={sessionMeta?.title ? `${sessionMeta.title} — jules.ink` : 'jules.ink — Session'}>
+  <SessionPage
+    client:load
+    sessionId={sessionId}
+    sessionTitle={sessionMeta?.title}
+    sessionRepo={sessionMeta?.repo}
+    sessionStatus={sessionMeta?.status}
+    sessionPrompt={sessionMeta?.prompt}
+  />
 </AppLayout>

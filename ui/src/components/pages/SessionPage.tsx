@@ -31,9 +31,19 @@ const DEFAULT_TONES = [
 
 interface SessionPageProps {
   sessionId?: string;
+  sessionTitle?: string;
+  sessionRepo?: string;
+  sessionStatus?: string;
+  sessionPrompt?: string;
 }
 
-export function SessionPage({ sessionId = '' }: SessionPageProps) {
+export function SessionPage({
+  sessionId = '',
+  sessionTitle,
+  sessionRepo,
+  sessionStatus,
+  sessionPrompt,
+}: SessionPageProps) {
   const [selectedTone, setSelectedTone] = useState<string>('Noir');
   const [rightPanelMode, setRightPanelMode] =
     useState<RightPanelMode>('reading');
@@ -204,7 +214,8 @@ export function SessionPage({ sessionId = '' }: SessionPageProps) {
     <>
       <TopBar
         sessionId={sessionId || undefined}
-        sessionTitle={stream.sessionInfo?.title || (sessionId ? 'Loading...' : undefined)}
+        sessionTitle={stream.sessionInfo?.title || sessionTitle || (sessionId ? sessionId : undefined)}
+        sessionRepo={stream.sessionInfo?.repo || sessionRepo}
         sessionState={stream.sessionState}
         onPlay={handlePlay}
         onPause={handlePause}
