@@ -3,10 +3,10 @@ import { processSessionAndPrint } from '../src/pipeline.js';
 import fs from 'fs';
 import path from 'path';
 
-const runE2E = (process.env.GEMINI_API_KEY && process.env.JULES_API_KEY) ? describe : describe.skip;
+const TEST_SESSION_ID = process.env.JULES_SESSION_ID;
+const runE2E = (process.env.GEMINI_API_KEY && process.env.JULES_API_KEY && TEST_SESSION_ID) ? describe : describe.skip;
 
 runE2E('E2E Pipeline', () => {
-  const TEST_SESSION_ID = '10353056172872786350';
 
   it('runs the full loop and generates labeled images', async () => {
     // 1. Run the pipeline

@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { createSession, removeSession } from '../../../../lib/session-state';
+import { readEnv } from '../../../../lib/api-keys';
 
 export const GET: APIRoute = async ({ params, request }) => {
   const sessionId = params.id!;
@@ -22,6 +23,15 @@ export const GET: APIRoute = async ({ params, request }) => {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  // Read API keys from .env store (persisted by settings page)
+  const env = await readEnv();
+  const apiKey = process.env.GEMINI_API_KEY || env.get('GEMINI_API_KEY');
+  // Ensure Jules SDK can authenticate too
+  if (!process.env.JULES_API_KEY) {
+    const julesKey = env.get('JULES_API_KEY');
+    if (julesKey) process.env.JULES_API_KEY = julesKey;
   }
 
   const activeSession = createSession(sessionId);
@@ -47,6 +57,7 @@ export const GET: APIRoute = async ({ params, request }) => {
         for await (const event of streamSession(sessionId, {
           tone,
           model,
+          apiKey,
           signal: activeSession.controller.signal,
           afterIndex,
         })) {

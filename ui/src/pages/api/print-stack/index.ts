@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '../../../../../');
+const ROOT_DIR = process.env.JULES_INK_ROOT || path.resolve(__dirname, '../../../../../');
 const STACKS_DIR = path.join(ROOT_DIR, '.jules', 'stacks');
 
 export const GET: APIRoute = async () => {
