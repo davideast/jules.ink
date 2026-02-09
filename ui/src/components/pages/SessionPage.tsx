@@ -37,6 +37,8 @@ interface SessionPageProps {
   sessionRepo?: string;
   sessionStatus?: string;
   sessionPrompt?: string;
+  initialTone?: string;
+  initialModel?: string;
 }
 
 export function SessionPage({
@@ -45,13 +47,15 @@ export function SessionPage({
   sessionRepo,
   sessionStatus,
   sessionPrompt,
+  initialTone,
+  initialModel,
 }: SessionPageProps) {
-  const [selectedTone, setSelectedTone] = useState<string>('Noir');
+  const [selectedTone, setSelectedTone] = useState<string>(initialTone || 'Noir');
   const [rightPanelMode, setRightPanelMode] =
     useState<RightPanelMode>('reading');
   const [printerDropdownOpen, setPrinterDropdownOpen] = useState(false);
   const [activeLabelIndex, setActiveLabelIndex] = useState(0);
-  const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash-lite');
+  const [selectedModel, setSelectedModel] = useState(initialModel || 'gemini-2.5-flash-lite');
   const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
   const [currentStackId, setCurrentStackId] = useState<string | null>(null);
 
@@ -78,6 +82,11 @@ export function SessionPage({
   useEffect(() => {
     stream.setTone(selectedTone.toLowerCase());
   }, [selectedTone, stream]);
+
+  // Update model in stream when selectedModel changes
+  useEffect(() => {
+    stream.setModel(selectedModel);
+  }, [selectedModel, stream]);
 
   // Persist activities to PrintStack
   useEffect(() => {
@@ -183,8 +192,11 @@ export function SessionPage({
     (p) => p.name === selectedPrinter,
   );
 
-  // All tones: defaults + saved custom tones
-  const allTones = [...DEFAULT_TONES, ...savedTones.map(t => t.name)];
+  // All tones: defaults + saved custom tones + initialTone if not already present
+  const baseTones = [...DEFAULT_TONES, ...savedTones.map(t => t.name)];
+  const allTones = initialTone && !baseTones.includes(initialTone)
+    ? [...baseTones, initialTone]
+    : baseTones;
 
   // Format time from createTime or use index
   const formatTime = (activity: typeof stream.activities[0]) => {
@@ -233,7 +245,7 @@ export function SessionPage({
         <ModelSelector
           selectedModel={selectedModel}
           onModelChange={setSelectedModel}
-          disabled={stream.sessionState === 'streaming'}
+          disabled={stream.sessionState !== 'idle' && stream.sessionState !== 'paused'}
         />
       </TopBar>
       <div className="flex flex-1 overflow-hidden">

@@ -188,5 +188,9 @@ export function useSessionStream(): UseSessionStreamReturn {
     toneRef.current = tone;
   }, []);
 
-  return { sessionInfo, activities, sessionState, play, pause, resume, stop, setTone, error };
+  const setModel = useCallback((model: string) => {
+    modelRef.current = model;
+  }, []);
+
+  return { sessionInfo, activities, sessionState, play, pause, resume, stop, setTone, setModel, error };
 }
