@@ -124,6 +124,51 @@ program
     }
   });
 
+program
+  .command('ui')
+  .description('Start the UI and API server for local development')
+  .action(async () => {
+    const { spawn } = await import('child_process');
+
+    // Resolve ui/ directory relative to this file
+    const uiDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
+
+    if (!fs.existsSync(uiDir)) {
+      console.error('ui/ directory not found. Run this command from the jules-ink repo.');
+      process.exit(1);
+    }
+
+    // Start API server
+    const { serve } = await import('@hono/node-server');
+    const { default: app } = await import('./server.js');
+
+    const server = serve({ fetch: app.fetch, port: 3000 }, (info) => {
+      console.log(`API server running at http://localhost:${info.port}`);
+    });
+
+    // Start Astro dev server
+    const astro = spawn('npx', ['astro', 'dev'], {
+      cwd: uiDir,
+      stdio: 'inherit',
+      shell: true,
+    });
+
+    astro.on('error', (err) => {
+      console.error('Failed to start Astro dev server:', err.message);
+      server.close();
+      process.exit(1);
+    });
+
+    const cleanup = () => {
+      astro.kill();
+      server.close();
+      process.exit();
+    };
+
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+  });
+
 // Only parse when run directly as the CLI entry point
 const __filename = fileURLToPath(import.meta.url);
 if (process.argv[1] === __filename || process.argv[1]?.endsWith('/jules-ink')) {
