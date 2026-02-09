@@ -16,3 +16,5 @@ export { default as thermal } from './print.js';
 export type { device, config } from './print.js';
 
 export { TONE_PRESETS } from './tone-presets.js';
+export { loadTones, saveTone, deleteTone } from './tones.js';
+export type { Tone } from './tones.js';
