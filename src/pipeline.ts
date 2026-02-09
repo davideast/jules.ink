@@ -3,7 +3,6 @@
  * This module couples streaming, file I/O, and printing in a single generator.
  * The new `streamSession` yields portable typed events without I/O side effects.
  */
-import { jules } from '@google/jules-sdk';
 import { SessionSummarizer } from './summarizer.js';
 import { generateLabel, LabelData } from './label-generator.js';
 import fs from 'fs';
@@ -41,6 +40,9 @@ export async function* processSessionAndPrint(sessionId: string, options: Proces
   } else if (!options.printer) {
     console.warn('⚠️ No printer found. Labels will be saved to disk only.');
   }
+
+  const { connect } = await import('@google/jules-sdk');
+  const jules = connect();
 
   const summarizer = new SessionSummarizer({
     backend: 'cloud',

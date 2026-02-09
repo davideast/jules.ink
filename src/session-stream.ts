@@ -1,4 +1,4 @@
-import { jules, type Activity } from '@google/jules-sdk';
+import type { Activity } from '@google/jules-sdk';
 import { SessionSummarizer } from './summarizer.js';
 import type { FileStat } from './label-generator.js';
 
@@ -54,6 +54,9 @@ export async function* streamSession(
     cloudModelName: model,
     tone,
   });
+
+  const { connect } = await import('@google/jules-sdk');
+  const jules = connect();
 
   let rollingSummary = '';
   const session = jules.session(sessionId);

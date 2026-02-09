@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { streamSession } from './session-stream.js';
 import { generateLabel } from './label-generator.js';
 import thermal from './print.js';
 import fs from 'fs';
@@ -61,6 +60,8 @@ program
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
     let repo = 'unknown/repo';
+
+    const { streamSession } = await import('./session-stream.js');
 
     try {
       for await (const event of streamSession(sessionId, { model, tone })) {

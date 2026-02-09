@@ -17,15 +17,14 @@ app.use('/*', cors({
   origin: allowedOrigins,
 }));
 
-const apiKey = process.env["GEMINI_API_KEY"];
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
-
 const model = "imagen-4.0-generate-001";
 
 app.post('/api/generate', async (c) => {
-  if (!ai) {
+  const apiKey = process.env["GEMINI_API_KEY"];
+  if (!apiKey) {
     return c.json({ error: "GEMINI_API_KEY environment variable is required" }, 500);
   }
+  const ai = new GoogleGenAI({ apiKey });
 
   const { prompt } = await c.req.json();
   if (!prompt) return c.json({ error: 'prompt required' }, 400);
@@ -68,7 +67,7 @@ export default app;
 const isMain = process.argv[1] === fileURLToPath(import.meta.url) || process.argv[1]?.endsWith('server.ts');
 
 if (isMain) {
-  if (!apiKey) {
+  if (!process.env["GEMINI_API_KEY"]) {
     throw new Error("GEMINI_API_KEY environment variable is required");
   }
 
