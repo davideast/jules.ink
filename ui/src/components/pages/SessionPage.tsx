@@ -8,6 +8,7 @@ import { LabelPreview } from '../LabelPreview';
 import { LabelCardSkeleton } from '../LabelCardSkeleton';
 import { ModelSelector, MODELS } from '../ModelSelector';
 import { ReadingPane } from '../ReadingPane';
+import { DiffView } from '../DiffView';
 import { ToneCreator } from '../ToneCreator';
 import type { SavedTone } from '../ToneCreator';
 import { StatusBar } from '../StatusBar';
@@ -19,9 +20,11 @@ import { useTones } from '../../hooks/useTones';
 import {
   type PrintStack,
   savePrintStack,
+  findLatestStack,
+  versionKey,
 } from '../../lib/print-stack';
 
-type RightPanelMode = 'reading' | 'creating';
+type RightPanelMode = 'reading' | 'creating' | 'diff';
 
 const DEFAULT_TONES = [
   'Noir',
@@ -59,8 +62,18 @@ export function SessionPage({
   const [selectedModel, setSelectedModel] = useState(initialModel || 'gemini-2.5-flash-lite');
   const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
   const [currentStackId, setCurrentStackId] = useState<string | null>(null);
+  const [diffFilePath, setDiffFilePath] = useState<string | null>(null);
+  const [fetchingDiff, setFetchingDiff] = useState(false);
+  const [isLoadingStack, setIsLoadingStack] = useState(!!sessionId);
+  const [loadedStack, setLoadedStack] = useState<PrintStack | null>(null);
 
   const stackMetadataRef = useRef<{ startedAt: string; tone: string; model: string; repo: string } | null>(null);
+  const skipAutoSelectRef = useRef(false);
+
+  // Debounced save refs
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveInFlightRef = useRef(false);
+  const pendingSaveRef = useRef<PrintStack | null>(null);
 
   const stream = useSessionStream();
   const printerHook = usePrinters();
@@ -72,12 +85,68 @@ export function SessionPage({
     online: p.online,
   }));
 
-  // Auto-select latest activity as it arrives
+  // --- Debounced save helpers ---
+  const flushSave = useCallback(async (stack: PrintStack) => {
+    if (saveInFlightRef.current) {
+      pendingSaveRef.current = stack;
+      return;
+    }
+    saveInFlightRef.current = true;
+    try {
+      await savePrintStack(stack);
+    } catch (err) {
+      console.error('Failed to save stack', err);
+    } finally {
+      saveInFlightRef.current = false;
+      const pending = pendingSaveRef.current;
+      if (pending) {
+        pendingSaveRef.current = null;
+        flushSave(pending);
+      }
+    }
+  }, []);
+
+  // --- Load cached stack on mount ---
   useEffect(() => {
+    if (!sessionId) {
+      setIsLoadingStack(false);
+      return;
+    }
+    let cancelled = false;
+    findLatestStack(sessionId).then(stack => {
+      if (cancelled) return;
+      if (stack && stack.activities.length > 0) {
+        skipAutoSelectRef.current = true;
+        stream.loadFromStack(stack);
+        setSelectedTone(stack.tone);
+        setLoadedStack(stack);
+        // Sync model to first activity so ReadingPane matches the label
+        const firstModel = stack.activities[0]?.model;
+        if (firstModel) setSelectedModel(firstModel);
+      }
+      setIsLoadingStack(false);
+    });
+    return () => { cancelled = true; };
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps -- run once on mount
+
+  // Auto-select latest activity as it arrives (skip on cache load)
+  useEffect(() => {
+    if (skipAutoSelectRef.current) {
+      skipAutoSelectRef.current = false;
+      return;
+    }
     if (stream.activities.length > 0) {
       setActiveLabelIndex(stream.activities.length - 1);
     }
   }, [stream.activities.length]);
+
+  // Reset diff view when switching timeline entries
+  useEffect(() => {
+    if (rightPanelMode === 'diff') {
+      setRightPanelMode('reading');
+      setDiffFilePath(null);
+    }
+  }, [activeLabelIndex]);
 
   // Update tone in stream when selectedTone changes
   useEffect(() => {
@@ -89,13 +158,19 @@ export function SessionPage({
     stream.setModel(selectedModel);
   }, [selectedModel, stream]);
 
-  // Persist activities to PrintStack
+  // Bulk-switch cached versions when tone/model selection changes on a completed session
+  useEffect(() => {
+    if (stream.sessionState !== 'complete') return;
+    stream.switchAllVersions(selectedTone, selectedModel);
+  }, [selectedTone, selectedModel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounced persist of activities to PrintStack
   useEffect(() => {
     if (!currentStackId || !stackMetadataRef.current) return;
 
     // Update repo if we have it now
     if (stream.sessionInfo?.repo && !stackMetadataRef.current.repo) {
-       stackMetadataRef.current.repo = stream.sessionInfo.repo;
+      stackMetadataRef.current.repo = stream.sessionInfo.repo;
     }
 
     const activitiesToSave = stream.activities.map(
@@ -107,10 +182,49 @@ export function SessionPage({
       tone: stackMetadataRef.current.tone,
       repo: stackMetadataRef.current.repo,
       startedAt: stackMetadataRef.current.startedAt,
+      stackStatus: 'streaming',
       activities: activitiesToSave,
     };
-    savePrintStack(updatedStack).catch((err) => console.error('Failed to save stack', err));
-  }, [currentStackId, stream.activities, stream.sessionInfo, sessionId]);
+
+    // Debounce: clear previous timer, set new 500ms timer
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      flushSave(updatedStack);
+    }, 500);
+  }, [currentStackId, stream.activities, stream.sessionInfo, sessionId, flushSave]);
+
+  // Mark stack complete when session finishes
+  useEffect(() => {
+    if (stream.sessionState !== 'complete' || !currentStackId || !stackMetadataRef.current) return;
+
+    // Cancel any pending debounced save
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+
+    // Update repo if we have it now
+    if (stream.sessionInfo?.repo && !stackMetadataRef.current.repo) {
+      stackMetadataRef.current.repo = stream.sessionInfo.repo;
+    }
+
+    const activitiesToSave = stream.activities.map(
+      ({ imageUrl, ...rest }) => rest,
+    );
+    const finalStack: PrintStack = {
+      id: currentStackId,
+      sessionId: stream.sessionInfo?.sessionId || sessionId,
+      tone: stackMetadataRef.current.tone,
+      repo: stackMetadataRef.current.repo,
+      startedAt: stackMetadataRef.current.startedAt,
+      stackStatus: 'complete',
+      activities: activitiesToSave,
+    };
+    flushSave(finalStack);
+
+    // Store as loadedStack for regeneration reference
+    setLoadedStack(finalStack);
+  }, [stream.sessionState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePlay = useCallback(() => {
     if (stream.sessionState === 'paused') {
@@ -133,6 +247,7 @@ export function SessionPage({
         tone: selectedTone,
         repo: repo,
         startedAt: startedAt,
+        stackStatus: 'streaming',
         activities: [],
       };
       savePrintStack(newStack).catch((err) => console.error('Failed to save initial stack', err));
@@ -147,10 +262,112 @@ export function SessionPage({
   }, [stream]);
 
   const handleStop = useCallback(() => {
+    // Finalize current stack before clearing
+    if (currentStackId && stackMetadataRef.current) {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      if (stream.sessionInfo?.repo && !stackMetadataRef.current.repo) {
+        stackMetadataRef.current.repo = stream.sessionInfo.repo;
+      }
+      const activitiesToSave = stream.activities.map(
+        ({ imageUrl, ...rest }) => rest,
+      );
+      const finalStack: PrintStack = {
+        id: currentStackId,
+        sessionId: stream.sessionInfo?.sessionId || sessionId,
+        tone: stackMetadataRef.current.tone,
+        repo: stackMetadataRef.current.repo,
+        startedAt: stackMetadataRef.current.startedAt,
+        stackStatus: 'complete',
+        activities: activitiesToSave,
+      };
+      flushSave(finalStack);
+    }
+
     setCurrentStackId(null);
     stream.stop();
     setActiveLabelIndex(0);
-  }, [stream]);
+  }, [stream, currentStackId, sessionId, flushSave]);
+
+  // Derive the active activity for the reading pane
+  const activeActivity = stream.activities[activeLabelIndex] ?? null;
+
+  const [regeneratingActivityId, setRegeneratingActivityId] = useState<string | null>(null);
+
+  const handleRegenerate = useCallback(async () => {
+    const activity = activeActivity;
+    if (!activity) return;
+
+    // Check version cache first — instant switch if available
+    const key = versionKey(selectedTone, selectedModel);
+    if (activity.versions?.[key]) {
+      stream.switchActivityVersion(activity.activityId, selectedTone, selectedModel);
+      return;
+    }
+
+    // No cached version — call API
+    setRegeneratingActivityId(activity.activityId);
+    try {
+      const res = await fetch('/api/regenerate-summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          summary: activity.summary,
+          activityType: activity.activityType,
+          tone: selectedTone.toLowerCase(),
+          model: selectedModel,
+        }),
+      });
+      if (!res.ok) throw new Error('Regeneration failed');
+      const { summary } = await res.json();
+      stream.patchActivityVersion(activity.activityId, selectedTone, selectedModel, { summary });
+
+      // Persist updated versions to disk
+      const stackId = currentStackId || loadedStack?.id;
+      if (stackId) {
+        const normalizedTone = selectedTone.toLowerCase();
+        const newKey = versionKey(normalizedTone, selectedModel);
+        const newVersion = { summary, tone: normalizedTone, model: selectedModel, status: activity.status, codeReview: activity.codeReview };
+        const updatedActivities = stream.activities.map(a => {
+          const { imageUrl, ...rest } = a;
+          if (a.activityId !== activity.activityId) return rest;
+          return {
+            ...rest,
+            summary, tone: normalizedTone, model: selectedModel,
+            versions: { ...rest.versions, [newKey]: newVersion },
+          };
+        });
+        const src = loadedStack;
+        const meta = stackMetadataRef.current;
+        const updatedStack: PrintStack = {
+          id: stackId,
+          sessionId: src?.sessionId || stream.sessionInfo?.sessionId || sessionId,
+          tone: src?.tone || meta?.tone || selectedTone,
+          repo: src?.repo || meta?.repo || stream.sessionInfo?.repo || '',
+          startedAt: src?.startedAt || meta?.startedAt || new Date().toISOString(),
+          stackStatus: 'complete',
+          activities: updatedActivities,
+        };
+        flushSave(updatedStack);
+        setLoadedStack(updatedStack);
+      }
+    } catch (err) {
+      console.error('Failed to regenerate activity:', err);
+    } finally {
+      setRegeneratingActivityId(null);
+    }
+  }, [activeActivity, selectedTone, selectedModel, stream, currentStackId, loadedStack, sessionId, flushSave]);
+
+  const handleVersionSelect = useCallback((tone: string, model: string) => {
+    if (!activeActivity) return;
+    stream.switchActivityVersion(activeActivity.activityId, tone, model);
+    // Update selectors to match the chosen version
+    const titleCaseTone = tone.charAt(0).toUpperCase() + tone.slice(1);
+    setSelectedTone(titleCaseTone);
+    setSelectedModel(model);
+  }, [activeActivity, stream]);
 
   const handleAddTone = useCallback(() => {
     setRightPanelMode((prev) =>
@@ -181,12 +398,43 @@ export function SessionPage({
     setPrinterDropdownOpen(false);
   }, []);
 
+  const handleFileClick = useCallback((filePath: string) => {
+    const activity = stream.activities[activeLabelIndex];
+    if (!activity) return;
+
+    if (activity.unidiffPatch) {
+      // Diff already available — switch immediately
+      setDiffFilePath(filePath);
+      setRightPanelMode('diff');
+      return;
+    }
+
+    // Fetch diff on-demand from Jules API
+    const sid = stream.sessionInfo?.sessionId || sessionId;
+    if (!sid) return;
+
+    setFetchingDiff(true);
+    fetch(`/api/session/${encodeURIComponent(sid)}/diff?activityId=${encodeURIComponent(activity.activityId)}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.unidiffPatch) {
+          stream.patchActivity(activity.activityId, { unidiffPatch: data.unidiffPatch });
+          setDiffFilePath(filePath);
+          setRightPanelMode('diff');
+        }
+      })
+      .catch(() => {})
+      .finally(() => setFetchingDiff(false));
+  }, [stream, activeLabelIndex, sessionId]);
+
+  const handleDiffBack = useCallback(() => {
+    setRightPanelMode('reading');
+    setDiffFilePath(null);
+  }, []);
+
   const handleScanPrinters = useCallback(() => {
     printerHook.scan();
   }, [printerHook]);
-
-  // Derive the active activity for the reading pane
-  const activeActivity = stream.activities[activeLabelIndex] ?? null;
 
   // Derive selected printer data
   const selectedPrinterData = printerOptions.find(
@@ -198,6 +446,18 @@ export function SessionPage({
   const allTones = initialTone && !baseTones.includes(initialTone)
     ? [...baseTones, initialTone]
     : baseTones;
+
+  // Version-aware regeneration controls
+  const targetKey = activeActivity ? versionKey(selectedTone, selectedModel) : null;
+  const hasCachedVersion = !!(targetKey && activeActivity?.versions?.[targetKey]);
+  const versionCount = activeActivity?.versions ? Object.keys(activeActivity.versions).length : 0;
+  const showRegenerate = !!(
+    activeActivity &&
+    stream.sessionState === 'complete' &&
+    regeneratingActivityId === null &&
+    (selectedTone.toLowerCase() !== (activeActivity.tone || '').toLowerCase() ||
+     selectedModel !== activeActivity.model)
+  );
 
   // Format time from createTime or use index
   const formatTime = (activity: typeof stream.activities[0]) => {
@@ -227,6 +487,27 @@ export function SessionPage({
     return map[activityType] || activityType.toUpperCase();
   };
 
+  if (isLoadingStack) {
+    return (
+      <>
+        <TopBar
+          sessionId={sessionId || undefined}
+          sessionTitle={sessionTitle || (sessionId ? sessionId : undefined)}
+          sessionRepo={sessionRepo}
+          sessionState="idle"
+          onPlay={() => {}}
+          onPause={() => {}}
+          onStop={() => {}}
+          onSessionClose={() => { window.location.href = '/'; }}
+          onSettings={() => { window.location.href = '/settings'; }}
+        />
+        <div className="flex flex-1 items-center justify-center text-[#72728a] text-sm">
+          Loading session...
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <TopBar
@@ -246,7 +527,7 @@ export function SessionPage({
         <ModelSelector
           selectedModel={selectedModel}
           onModelChange={setSelectedModel}
-          disabled={stream.sessionState !== 'idle' && stream.sessionState !== 'paused'}
+          disabled={stream.sessionState === 'streaming'}
         />
       </TopBar>
       <div className="flex flex-1 overflow-hidden">
@@ -283,12 +564,16 @@ export function SessionPage({
                         selected={index === activeLabelIndex}
                         onClick={() => setActiveLabelIndex(index)}
                       >
-                        <LabelPreview
-                          repo={stream.sessionInfo?.repo || sessionRepo || ''}
-                          sessionId={sessionId}
-                          summary={activity.summary}
-                          files={activity.files}
-                        />
+                        {regeneratingActivityId === activity.activityId ? (
+                          <LabelCardSkeleton />
+                        ) : (
+                          <LabelPreview
+                            repo={stream.sessionInfo?.repo || sessionRepo || ''}
+                            sessionId={sessionId}
+                            summary={activity.summary}
+                            files={activity.files}
+                          />
+                        )}
                       </LabelCard>
                     </TimelineEntry>
                   ))}
@@ -305,7 +590,25 @@ export function SessionPage({
 
         {/* Right panel: reading pane or tone creator */}
         <aside className="w-[45%] bg-sidebar-bg flex flex-col relative h-full">
-          {rightPanelMode === 'reading' ? (
+          {rightPanelMode === 'diff' && diffFilePath && activeActivity?.unidiffPatch ? (
+            <DiffView
+              filePath={diffFilePath}
+              unidiffPatch={activeActivity.unidiffPatch}
+              onBack={handleDiffBack}
+            />
+          ) : rightPanelMode === 'diff' && fetchingDiff ? (
+            <div className="flex-1 flex items-center justify-center text-[#72728a] text-sm">
+              Loading diff...
+            </div>
+          ) : rightPanelMode === 'creating' ? (
+            <ToneCreator
+              savedTones={savedTones}
+              onSave={handleSaveTone}
+              onDeleteTone={handleDeleteTone}
+              onSelectTone={handleSelectSavedTone}
+              onClose={() => setRightPanelMode('reading')}
+            />
+          ) : (
             <ReadingPane
               toneName={activeActivity?.tone || selectedTone}
               modelName={MODELS.find(m => m.id === (activeActivity?.model || selectedModel))?.name}
@@ -323,14 +626,15 @@ export function SessionPage({
                   deletions: f.deletions,
                 })) ?? []
               }
-            />
-          ) : (
-            <ToneCreator
-              savedTones={savedTones}
-              onSave={handleSaveTone}
-              onDeleteTone={handleDeleteTone}
-              onSelectTone={handleSelectSavedTone}
-              onClose={() => setRightPanelMode('reading')}
+              status={activeActivity?.status}
+              codeReview={activeActivity?.codeReview}
+              onFileClick={activeActivity?.files.length ? handleFileClick : undefined}
+              onRegenerate={showRegenerate ? handleRegenerate : undefined}
+              regenerateLabel={hasCachedVersion ? 'Switch' : 'Regenerate'}
+              versionCount={versionCount}
+              unidiffPatch={activeActivity?.unidiffPatch}
+              versions={activeActivity?.versions}
+              onVersionSelect={handleVersionSelect}
             />
           )}
         </aside>

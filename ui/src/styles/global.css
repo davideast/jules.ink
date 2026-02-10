@@ -35,6 +35,16 @@
   border-radius: 2px;
   border: 1px solid #e5e5e5;
   position: relative;
+  container-type: inline-size;
+  container-name: label-card;
+}
+
+@container label-card (max-width: 280px) {
+  .label-body-text { font-size: 10px !important; }
+}
+
+@container label-card (min-width: 341px) {
+  .label-body-text { font-size: 18px !important; }
 }
 
 .active-card-container {

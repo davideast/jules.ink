@@ -1,6 +1,9 @@
 import { GoogleGenAI } from '@google/genai';
 import { Ollama } from 'ollama';
-import { type Activity } from '@google/jules-sdk';
+import { type Activity, type JulesClient } from '@google/jules-sdk';
+// @google/jules-mcp is imported dynamically to avoid hard dependency in CI/test environments
+type SessionStateResult = Awaited<ReturnType<typeof import('@google/jules-mcp')['getSessionState']>>;
+type ReviewChangesResult = Awaited<ReturnType<typeof import('@google/jules-mcp')['codeReview']>>;
 import parseDiff from 'parse-diff';
 import micromatch from 'micromatch';
 import { encode } from 'gpt-tokenizer';
@@ -41,6 +44,20 @@ function resolveToneModifier(tone: string | undefined): string {
   return tone;
 }
 
+interface ActivityLogEntry {
+  index: number;
+  type: string;
+  summarySnippet: string;
+  hadCodeChanges: boolean;
+}
+
+interface CachedSessionState {
+  result: SessionStateResult;
+  fetchedAt: number;
+}
+
+const SESSION_STATE_TTL_MS = 30_000;
+
 export interface SummarizerConfig {
   backend?: 'cloud' | 'local';
   apiKey?: string;
@@ -48,6 +65,7 @@ export interface SummarizerConfig {
   cloudModelName?: string;
   tone?: string;
   tier?: 'free' | 'tier1';
+  sessionId?: string;
 }
 
 export class SessionSummarizer {
@@ -58,11 +76,16 @@ export class SessionSummarizer {
   private genModel: any | null = null;
   private ollama: Ollama | null = null;
   private limiter: Bottleneck;
+  private sessionId: string | undefined;
+  private julesClient: JulesClient | null = null;
+  private activityLog: ActivityLogEntry[] = [];
+  private cachedSessionState: CachedSessionState | null = null;
 
   constructor(config: SummarizerConfig = {}) {
     this.backend = config.backend || 'local';
     this.localModelName = config.localModelName || LOCAL_MODEL_DEFAULT;
     this.toneModifier = resolveToneModifier(config.tone);
+    this.sessionId = config.sessionId;
 
     if (this.backend === 'cloud') {
       const key = config.apiKey || process.env.GEMINI_API_KEY;
@@ -80,80 +103,282 @@ export class SessionSummarizer {
     }
   }
 
+  private async getJulesClient(): Promise<JulesClient> {
+    if (!this.julesClient) {
+      const { connect } = await import('@google/jules-sdk');
+      this.julesClient = connect();
+    }
+    return this.julesClient;
+  }
+
+  private async getCachedSessionState(): Promise<SessionStateResult | undefined> {
+    if (!this.sessionId) return undefined;
+    const now = Date.now();
+    if (this.cachedSessionState && (now - this.cachedSessionState.fetchedAt) < SESSION_STATE_TTL_MS) {
+      return this.cachedSessionState.result;
+    }
+    try {
+      const client = await this.getJulesClient();
+      const { getSessionState } = await import('@google/jules-mcp');
+      const result = await getSessionState(client, this.sessionId);
+      this.cachedSessionState = { result, fetchedAt: now };
+      return result;
+    } catch (err) {
+      console.error('[Summarizer] Failed to fetch session state:', (err as Error).message);
+      return this.cachedSessionState?.result;
+    }
+  }
+
+  private getTrajectoryString(): string {
+    const recent = this.activityLog.slice(-5);
+    if (recent.length === 0) return 'No prior activities.';
+    return recent.map((a, i) => `${i + 1}. [${a.type}] ${a.summarySnippet}`).join('\n');
+  }
+
   async generateRollingSummary(
     previousState: string,
     currentActivity: Activity
   ): Promise<string> {
     const activityContext = this.simplifyActivity(currentActivity);
-
-    // DECISION LOGIC: Coding (Diffs) vs. Non-Coding (Plans/Messages)
     const isCodeTask = !!activityContext.context;
 
+    // Fetch session goal for context-aware prompts
+    const sessionState = await this.getCachedSessionState();
+    const sessionGoal = sessionState?.prompt;
+    const trajectory = this.getTrajectoryString();
+
+    let summary: string;
     if (isCodeTask) {
-      return this.executeRequest(this.getCodePrompt(activityContext));
+      summary = await this.executeRequest(this.getCodePrompt(activityContext, sessionGoal, trajectory));
     } else {
-      return this.executeRequest(this.getPlanningPrompt(activityContext));
+      summary = await this.executeRequest(this.getPlanningPrompt(activityContext, sessionGoal, trajectory));
     }
+
+    // Record in activity log
+    this.activityLog.push({
+      index: this.activityLog.length,
+      type: currentActivity.type,
+      summarySnippet: summary.slice(0, 80),
+      hadCodeChanges: isCodeTask,
+    });
+
+    return summary;
   }
 
   // --- PROMPT 1: THE ACTIVE CODER (For Diffs) ---
-  private getCodePrompt(context: any): string {
-    const toneInstruction = this.toneModifier ? `\n      4. TONE: ${this.toneModifier}` : '';
+  private getCodePrompt(context: any, sessionGoal?: string, trajectory?: string): string {
+    const toneInstruction = this.toneModifier ? `\n      5. TONE: ${this.toneModifier}` : '';
+    const goalBlock = sessionGoal ? `\n      SESSION GOAL: ${sessionGoal}` : '';
+    const trajectoryBlock = trajectory ? `\n      TRAJECTORY SO FAR:\n      ${trajectory}` : '';
 
     return `
       ROLE: You are the AI Developer.
-      TASK: Report the technical action taken.
+      TASK: Report the technical action taken in this activity, grounded in the session's goal and trajectory.
+      ${goalBlock}${trajectoryBlock}
 
       INPUT DATA GUIDANCE:
       - 'status': 'truncated_large_file' -> Infer changes from 'affectedScopes'.
       - 'status': 'included' -> Read 'diff' for logic details.
-      
-      NEW ACTIVITY:
-      ${JSON.stringify(context)}
+
+      COMMIT MESSAGE: ${context.commitMessage || 'N/A'}
+      CHANGED FILES:
+      ${JSON.stringify(context.context)}
 
       INSTRUCTIONS:
       1. STYLE: Direct Technical Statement. Start with the Verb.
-         - YES: "Refactoring SessionClient to support new handshake."
-         - NO: "I am updating..." or "Updating..." (Passive)
-      2. FORMATTING: Wrap ALL filenames/classes in backticks (\`).
-      3. LENGTH: 110-150 chars.${toneInstruction}
+         - YES: "Refactored \`SessionSummarizer\` to inject session goal context into code prompts, enabling trajectory-aware summaries."
+         - YES: "Added \`generateStatus()\` method to \`summarizer.ts\` that queries MCP session state for rolling status narratives."
+         - NO: "I am updating..." or "Updated code" (too vague)
+      2. FORMATTING: Wrap ALL filenames/classes/functions in backticks (\`).
+      3. SPECIFICITY: Reference specific files, functions, or variables affected. Explain WHY the change was made relative to the session goal.
+      4. LENGTH: 200-400 chars.${toneInstruction}
 
       OUTPUT:
     `;
   }
 
   // --- PROMPT 2: THE OBJECTIVE REPORTER (For Plans/Messages) ---
-  private getPlanningPrompt(context: any): string {
-    const toneInstruction = this.toneModifier ? `\n      5. TONE: ${this.toneModifier}` : '';
+  private getPlanningPrompt(context: any, sessionGoal?: string, trajectory?: string): string {
+    const toneInstruction = this.toneModifier ? `\n      6. TONE: ${this.toneModifier}` : '';
+    const goalBlock = sessionGoal ? `\n      SESSION GOAL: ${sessionGoal}` : '';
+    const trajectoryBlock = trajectory ? `\n      TRAJECTORY SO FAR:\n      ${trajectory}` : '';
 
     return `
       ROLE: You are a Project Logger.
-      TASK: Summarize the event based on the JSON below.
+      TASK: Summarize the event, grounded in the session's goal and what has happened so far.
+      ${goalBlock}${trajectoryBlock}
 
       NEW ACTIVITY:
       ${JSON.stringify(context)}
 
       INSTRUCTIONS:
-      1. STYLE: Objective & Natural. 
+      1. STYLE: Objective & Natural.
          - BAD: "Hey, I made a plan..." (Too chatty)
          - BAD: "Strategizing the execution..." (Too corporate)
-         - GOOD: "Generated a plan to update the SessionClient logic."
-         - GOOD: "Plan approved. Starting implementation."
-         - GOOD: "User requested a format check."
+         - GOOD: "Generated a plan to restructure the authentication flow: migrate from session cookies to JWT tokens across 4 middleware files."
+         - GOOD: "Plan approved. Implementation will add rate limiting to the /api/stream endpoint and introduce a Bottleneck-based queue."
 
       2. BAN LIST: Do NOT start sentences with "Hey", "Okay", "So", "Alright", "Well".
-      
-      3. CONTENT: 
-         - Use the 'title' or 'description' fields from the input.
-         - Summarize the specific goal (e.g. "update SessionClient").
 
-      4. LENGTH: 110-150 chars.${toneInstruction}
+      3. CONTENT:
+         - Use the 'title' or 'description' fields from the input.
+         - Summarize the specific goal and connect it to the session trajectory.
+         - Be specific about what the plan/message addresses.
+
+      4. LENGTH: 200-400 chars.
+      5. FORMATTING: Wrap filenames/classes in backticks (\`) when referenced.${toneInstruction}
 
       OUTPUT:
     `;
   }
 
-  // ... (getLabelData, executeRequest, etc. remain exactly the same) ...
+  // --- NEW: Generate rolling status narrative ---
+  async generateStatus(activityIndex: number): Promise<string> {
+    if (!this.sessionId) throw new Error('sessionId required for generateStatus');
+
+    const client = await this.getJulesClient();
+    const { codeReview } = await import('@google/jules-mcp');
+
+    const [sessionState, review] = await Promise.all([
+      this.getCachedSessionState(),
+      codeReview(client, this.sessionId).catch(() => undefined),
+    ]);
+
+    if (!sessionState) throw new Error('Could not fetch session state');
+
+    const trajectory = this.getTrajectoryString();
+    const insights = review?.insights;
+    const filesSummary = review?.summary;
+
+    return this.executeRequest(`
+      ROLE: You are a Session Status Reporter.
+      TASK: Provide a "where are we now" narrative for this coding session.
+
+      SESSION GOAL: ${sessionState.prompt || 'Unknown'}
+      SESSION STATUS: ${sessionState.status}
+      ACTIVITY COUNT: ${activityIndex + 1}
+
+      TRAJECTORY (last 5 activities):
+      ${trajectory}
+
+      ${filesSummary ? `FILES TOUCHED: ${filesSummary.totalFiles} total (${filesSummary.created} created, ${filesSummary.modified} modified, ${filesSummary.deleted} deleted)` : ''}
+      ${insights ? `INSIGHTS: ${insights.planRegenerations} plan regenerations, ${insights.failedCommandCount} failed commands, ${insights.completionAttempts} completion attempts` : ''}
+      ${sessionState.lastAgentMessage ? `LAST AGENT MESSAGE: ${sessionState.lastAgentMessage.content.slice(0, 200)}` : ''}
+
+      INSTRUCTIONS:
+      1. Describe the current phase of work (planning, implementing, debugging, testing, etc.)
+      2. Summarize progress toward the session goal
+      3. Note any signals worth watching (failed commands, plan regenerations, etc.)
+      4. LENGTH: 200-500 chars
+      5. STYLE: Neutral, informative. Present tense. No first person.
+
+      OUTPUT:
+    `, { preserveNewlines: true });
+  }
+
+  // --- NEW: Generate per-activity code review ---
+  async generateCodeReview(activityId: string): Promise<string> {
+    if (!this.sessionId) throw new Error('sessionId required for generateCodeReview');
+
+    const client = await this.getJulesClient();
+    const { showDiff, codeReview } = await import('@google/jules-mcp');
+
+    const [diff, review] = await Promise.all([
+      showDiff(client, this.sessionId, { activityId }),
+      codeReview(client, this.sessionId, { activityId }).catch(() => undefined),
+    ]);
+
+    if (!diff.unidiffPatch) throw new Error('No diff available for this activity');
+
+    // Truncate large diffs to stay within token limits
+    const truncatedPatch = diff.unidiffPatch.length > 8000
+      ? diff.unidiffPatch.slice(0, 8000) + '\n... (truncated)'
+      : diff.unidiffPatch;
+
+    return this.executeRequest(`
+      ROLE: You are a Code Reviewer.
+      TASK: Provide a concise code review for the changes in this activity.
+
+      FILES CHANGED: ${diff.files.map(f => `${f.path} (+${f.additions}/-${f.deletions})`).join(', ')}
+
+      DIFF:
+      ${truncatedPatch}
+
+      ${review?.formatted ? `REVIEW CONTEXT:\n${review.formatted.slice(0, 1000)}` : ''}
+
+      INSTRUCTIONS:
+      Format your output EXACTLY as follows with each section on its own line:
+
+      **Patterns**
+      - item
+
+      **Trade-offs**
+      - item
+
+      **Risks**
+      - item
+
+      **Highlights**
+      - item
+
+      Rules:
+      1. Each section header must be bold (**Name**) on its own line
+      2. Each bullet must start with "- " on its own line
+      3. Wrap filenames in backticks
+      4. LENGTH: 300-600 chars total
+      5. If a section has nothing notable, omit it entirely
+
+      OUTPUT:
+    `, { preserveNewlines: true });
+  }
+
+  async styleTransfer(existingSummary: string, activityType: string): Promise<string> {
+    const toneInstruction = this.toneModifier || 'professional tone';
+    const isCode = activityType === 'changeSet';
+
+    const raw = await this.executeRequest(`
+      ROLE: You are a Style Transfer Writer.
+      TASK: Rewrite the following summary in a new tone while preserving ALL technical details.
+
+      ORIGINAL SUMMARY:
+      ${existingSummary}
+
+      ACTIVITY TYPE: ${isCode ? 'Code Change' : 'Planning/Message'}
+
+      INSTRUCTIONS:
+      1. TONE: ${toneInstruction}
+      2. Preserve ALL technical details: filenames, function names, class names, and backtick-wrapped references.
+      3. Change ONLY voice, style, and personality. Do NOT add or remove technical content.
+      4. Keep the same approximate length (200-400 chars).
+      5. Maintain backtick formatting for all code references.
+      6. Do NOT start with "I" or use first person.
+      7. Output PLAIN TEXT only. No markdown formatting — no *, **, _, or quotation marks for emphasis or dialogue.
+      8. Write as a single continuous paragraph. No line breaks.
+
+      OUTPUT:
+    `);
+    return this.cleanStyleTransferOutput(raw);
+  }
+
+  /** Strip markdown formatting artifacts that LLMs add despite being told not to. */
+  private cleanStyleTransferOutput(text: string): string {
+    // Preserve backtick code spans, strip everything else
+    const spans: string[] = [];
+    let cleaned = text.replace(/`[^`]+`/g, (m) => {
+      spans.push(m);
+      return `\x00${spans.length - 1}\x00`;
+    });
+    // Remove *, **, _ emphasis markers
+    cleaned = cleaned.replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1');
+    cleaned = cleaned.replace(/_([^_]+)_/g, '$1');
+    // Remove stray leading/trailing quotes used as dialogue
+    cleaned = cleaned.replace(/(^|\s)"(\w)/g, '$1$2');
+    cleaned = cleaned.replace(/(\w)"(\s|$)/g, '$1$2');
+    // Restore backtick spans
+    cleaned = cleaned.replace(/\x00(\d+)\x00/g, (_, i) => spans[parseInt(i)]);
+    return cleaned.trim();
+  }
+
   public getLabelData(activity: Activity) {
     const changeSetArtifact = activity.artifacts?.find(a => a.type === 'changeSet');
     if (!changeSetArtifact || !changeSetArtifact.gitPatch) return [];
@@ -167,7 +392,10 @@ export class SessionSummarizer {
       }));
   }
 
-  private async executeRequest(prompt: string, attempt = 1): Promise<string> {
+  private async executeRequest(prompt: string, options?: { attempt?: number; preserveNewlines?: boolean }): Promise<string> {
+    const attempt = options?.attempt ?? 1;
+    const keepNewlines = options?.preserveNewlines;
+
     return this.limiter.schedule(async () => {
       try {
         let text = '';
@@ -185,7 +413,11 @@ export class SessionSummarizer {
           });
           text = response.message.content;
         }
-        return text.replace(/```/g, '').replace(/[\n\r]/g, ' ').replace(/\s+/g, ' ').trim();
+        text = text.replace(/```/g, '');
+        if (keepNewlines) {
+          return text.replace(/[ \t]+/g, ' ').trim();
+        }
+        return text.replace(/[\n\r]/g, ' ').replace(/\s+/g, ' ').trim();
       } catch (error: any) {
         const isRetryable =
           error.status === 429 || error.message?.includes('429') ||
@@ -196,7 +428,7 @@ export class SessionSummarizer {
           const backoffMs = Math.min(2000 * Math.pow(2, attempt - 1), 60000);
           console.log(`[Summarizer] Retrying in ${backoffMs / 1000}s (attempt ${attempt}/5)...`);
           await new Promise(r => setTimeout(r, backoffMs));
-          return this.executeRequest(prompt, attempt + 1);
+          return this.executeRequest(prompt, { attempt: attempt + 1, preserveNewlines: keepNewlines });
         }
         console.error(`[Summarizer] Error:`, error.message);
         throw error;

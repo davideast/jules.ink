@@ -15,6 +15,9 @@ export type SessionEvent =
       files: FileStat[];
       commitMessage?: string;
       createTime?: string;
+      status?: string;
+      codeReview?: string;
+      unidiffPatch?: string;
     }
   | { type: 'session:complete'; sessionId: string; totalActivities: number }
   | { type: 'session:error'; sessionId: string; error: string };
@@ -53,6 +56,7 @@ export async function* streamSession(
     apiKey: apiKey || process.env.GEMINI_API_KEY,
     cloudModelName: model,
     tone,
+    sessionId,
   });
 
   const { connect } = await import('@google/jules-sdk');
@@ -94,15 +98,22 @@ export async function* streamSession(
         continue;
       }
 
-      // Generate summary
-      rollingSummary = await summarizer.generateRollingSummary(rollingSummary, activity);
-
-      // Extract file stats
+      // Extract file stats and commit message
       const files = summarizer.getLabelData(activity);
-
-      // Extract commit message if available
       const changeSet = activity.artifacts?.find(a => a.type === 'changeSet');
       const commitMessage = changeSet?.gitPatch?.suggestedCommitMessage;
+      const isChangeSet = !!changeSet;
+      const unidiffPatch = changeSet?.gitPatch?.unidiffPatch;
+
+      // Parallel: summary + status + code review
+      const summaryPromise = summarizer.generateRollingSummary(rollingSummary, activity);
+      const statusPromise = summarizer.generateStatus(count).catch(() => undefined);
+      const reviewPromise = isChangeSet
+        ? summarizer.generateCodeReview(activity.id).catch(() => undefined)
+        : Promise.resolve(undefined);
+
+      const [summary, status, review] = await Promise.all([summaryPromise, statusPromise, reviewPromise]);
+      rollingSummary = summary;
 
       yield {
         type: 'activity:processed',
@@ -113,6 +124,9 @@ export async function* streamSession(
         files,
         commitMessage,
         createTime: (activity as any).createTime,
+        status,
+        codeReview: review,
+        unidiffPatch,
       };
 
       count++;
