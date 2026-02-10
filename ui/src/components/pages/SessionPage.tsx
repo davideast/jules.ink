@@ -68,6 +68,7 @@ export function SessionPage({
   const [loadedStack, setLoadedStack] = useState<PrintStack | null>(null);
 
   const stackMetadataRef = useRef<{ startedAt: string; tone: string; model: string; repo: string } | null>(null);
+  const skipAutoSelectRef = useRef(false);
 
   // Debounced save refs
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -115,17 +116,25 @@ export function SessionPage({
     findLatestStack(sessionId).then(stack => {
       if (cancelled) return;
       if (stack && stack.activities.length > 0) {
+        skipAutoSelectRef.current = true;
         stream.loadFromStack(stack);
         setSelectedTone(stack.tone);
         setLoadedStack(stack);
+        // Sync model to first activity so ReadingPane matches the label
+        const firstModel = stack.activities[0]?.model;
+        if (firstModel) setSelectedModel(firstModel);
       }
       setIsLoadingStack(false);
     });
     return () => { cancelled = true; };
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps -- run once on mount
 
-  // Auto-select latest activity as it arrives
+  // Auto-select latest activity as it arrives (skip on cache load)
   useEffect(() => {
+    if (skipAutoSelectRef.current) {
+      skipAutoSelectRef.current = false;
+      return;
+    }
     if (stream.activities.length > 0) {
       setActiveLabelIndex(stream.activities.length - 1);
     }
@@ -314,12 +323,42 @@ export function SessionPage({
       if (!res.ok) throw new Error('Regeneration failed');
       const { summary } = await res.json();
       stream.patchActivityVersion(activity.activityId, selectedTone, selectedModel, { summary });
+
+      // Persist updated versions to disk
+      const stackId = currentStackId || loadedStack?.id;
+      if (stackId) {
+        const normalizedTone = selectedTone.toLowerCase();
+        const newKey = versionKey(normalizedTone, selectedModel);
+        const newVersion = { summary, tone: normalizedTone, model: selectedModel, status: activity.status, codeReview: activity.codeReview };
+        const updatedActivities = stream.activities.map(a => {
+          const { imageUrl, ...rest } = a;
+          if (a.activityId !== activity.activityId) return rest;
+          return {
+            ...rest,
+            summary, tone: normalizedTone, model: selectedModel,
+            versions: { ...rest.versions, [newKey]: newVersion },
+          };
+        });
+        const src = loadedStack;
+        const meta = stackMetadataRef.current;
+        const updatedStack: PrintStack = {
+          id: stackId,
+          sessionId: src?.sessionId || stream.sessionInfo?.sessionId || sessionId,
+          tone: src?.tone || meta?.tone || selectedTone,
+          repo: src?.repo || meta?.repo || stream.sessionInfo?.repo || '',
+          startedAt: src?.startedAt || meta?.startedAt || new Date().toISOString(),
+          stackStatus: 'complete',
+          activities: updatedActivities,
+        };
+        flushSave(updatedStack);
+        setLoadedStack(updatedStack);
+      }
     } catch (err) {
       console.error('Failed to regenerate activity:', err);
     } finally {
       setRegeneratingActivityId(null);
     }
-  }, [activeActivity, selectedTone, selectedModel, stream]);
+  }, [activeActivity, selectedTone, selectedModel, stream, currentStackId, loadedStack, sessionId, flushSave]);
 
   const handleVersionSelect = useCallback((tone: string, model: string) => {
     if (!activeActivity) return;

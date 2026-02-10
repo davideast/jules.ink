@@ -62,12 +62,12 @@ export const POST: APIRoute = async ({ request }) => {
     }
     const filepath = path.join(STACKS_DIR, `${stack.id}.json`);
 
-    // Immutability guard: don't overwrite a completed stack
+    // Immutability guard: don't overwrite a completed stack with streaming data
     try {
       const existing = await fs.readFile(filepath, 'utf-8');
       const parsed = JSON.parse(existing);
-      if ((parsed.stackStatus ?? 'complete') === 'complete') {
-        return new Response(JSON.stringify({ error: 'Cannot overwrite a completed stack' }), {
+      if ((parsed.stackStatus ?? 'complete') === 'complete' && stack.stackStatus !== 'complete') {
+        return new Response(JSON.stringify({ error: 'Cannot overwrite a completed stack with streaming data' }), {
           status: 409,
           headers: { 'Content-Type': 'application/json' },
         });
