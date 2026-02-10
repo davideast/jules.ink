@@ -257,21 +257,127 @@ export function SessionPage({
     setLoadedStack(finalStack);
   }, [stream.sessionState]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Derive the active activity for the reading pane
+  const activeActivity = stream.activities[activeLabelIndex] ?? null;
+
+  const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set());
+  const restartSnapshotRef = useRef<Map<string, string>>(new Map());
+
+  // Clear skeleton state as activities get replaced during restart
+  useEffect(() => {
+    if (regeneratingIds.size === 0) return;
+    const snapshot = restartSnapshotRef.current;
+    if (snapshot.size === 0) return;
+    setRegeneratingIds(prev => {
+      const next = new Set(prev);
+      for (const activity of stream.activities) {
+        if (next.has(activity.activityId) && activity.summary !== snapshot.get(activity.activityId)) {
+          next.delete(activity.activityId);
+        }
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [stream.activities]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Clear all skeletons when stream completes
+  useEffect(() => {
+    if (stream.sessionState === 'complete') {
+      if (regeneratingIds.size > 0) {
+        setRegeneratingIds(new Set());
+        restartSnapshotRef.current = new Map();
+      }
+    }
+  }, [stream.sessionState]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Shared helper: check cache for each activity, regenerate uncached ones, persist.
+  const regenerateActivities = useCallback(async (
+    targets: typeof stream.activities,
+    tone: string,
+    model: string,
+  ) => {
+    const targetKey = versionKey(tone, model);
+    const normalizedTone = tone.toLowerCase();
+
+    // Instant-switch any activities that already have cached versions
+    stream.switchAllVersions(tone, model);
+
+    // Find activities missing a version for this permutation
+    const uncached = targets.filter(a => !a.versions?.[targetKey]);
+    if (uncached.length === 0) return;
+
+    // Show skeletons for uncached activities
+    setRegeneratingIds(new Set(uncached.map(a => a.activityId)));
+
+    // Regenerate in parallel, collect results
+    const results = new Map<string, string>();
+
+    await Promise.all(uncached.map(async (activity) => {
+      try {
+        const res = await fetch('/api/regenerate-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            summary: activity.summary,
+            activityType: activity.activityType,
+            tone: normalizedTone,
+            model,
+          }),
+        });
+        if (!res.ok) throw new Error('Regeneration failed');
+        const { summary } = await res.json();
+        results.set(activity.activityId, summary);
+        stream.patchActivityVersion(activity.activityId, tone, model, { summary });
+      } catch (err) {
+        console.error('Failed to regenerate activity:', err);
+      } finally {
+        setRegeneratingIds(prev => {
+          const next = new Set(prev);
+          next.delete(activity.activityId);
+          return next;
+        });
+      }
+    }));
+
+    // Persist updated stack with new versions
+    const stackId = currentStackId || loadedStack?.id;
+    if (stackId && results.size > 0) {
+      const newKey = versionKey(normalizedTone, model);
+      const updatedActivities = stream.activities.map(a => {
+        const { imageUrl, ...rest } = a;
+        const newSummary = results.get(a.activityId);
+        if (!newSummary) return rest;
+        const newVersion = { summary: newSummary, tone: normalizedTone, model, status: rest.status, codeReview: rest.codeReview };
+        return {
+          ...rest,
+          summary: newSummary, tone: normalizedTone, model,
+          versions: { ...rest.versions, [newKey]: newVersion },
+        };
+      });
+      const src = loadedStack;
+      const meta = stackMetadataRef.current;
+      const updatedStack: PrintStack = {
+        id: stackId,
+        sessionId: src?.sessionId || stream.sessionInfo?.sessionId || sessionId,
+        tone: src?.tone || meta?.tone || tone,
+        repo: src?.repo || meta?.repo || stream.sessionInfo?.repo || '',
+        startedAt: src?.startedAt || meta?.startedAt || new Date().toISOString(),
+        stackStatus: 'complete',
+        activities: updatedActivities,
+      };
+      flushSave(updatedStack);
+      setLoadedStack(updatedStack);
+    }
+  }, [stream, currentStackId, loadedStack, sessionId, flushSave]);
+
   const handlePlay = useCallback(() => {
     if (stream.sessionState === 'paused') {
       stream.resume();
       return;
     }
 
-    // If we have loaded data and ALL activities have cached versions for
-    // the target tone+model, just switch versions instantly — no stream needed.
-    if (loadedStack && stream.activities.length > 0) {
-      const targetKey = versionKey(selectedTone, selectedModel);
-      const allCached = stream.activities.every(a => a.versions?.[targetKey]);
-      if (allCached) {
-        stream.switchAllVersions(selectedTone, selectedModel);
-        return;
-      }
+    // Switch existing activities to cached versions for the current permutation
+    if (stream.activities.length > 0) {
+      stream.switchAllVersions(selectedTone, selectedModel);
     }
 
     const newStackId = crypto.randomUUID();
@@ -282,30 +388,76 @@ export function SessionPage({
       startedAt,
       tone: selectedTone,
       model: selectedModel,
-      repo
+      repo,
     };
 
     const newStack: PrintStack = {
       id: newStackId,
-      sessionId: sessionId,
+      sessionId,
       tone: selectedTone,
-      repo: repo,
-      startedAt: startedAt,
+      repo,
+      startedAt,
       stackStatus: 'streaming',
       activities: [],
     };
     savePrintStack(newStack).catch((err) => console.error('Failed to save initial stack', err));
     setCurrentStackId(newStackId);
 
-    stream.play(sessionId, selectedTone.toLowerCase(), selectedModel);
-  }, [sessionId, selectedTone, selectedModel, stream, loadedStack]);
+    // Continue from last known activity, or fresh start if no activities
+    const lastIndex = stream.activities.length > 0
+      ? stream.activities[stream.activities.length - 1].index
+      : undefined;
+    stream.play(sessionId, selectedTone.toLowerCase(), selectedModel,
+      lastIndex !== undefined
+        ? { afterIndex: lastIndex, preserveVersionsFrom: stream.activities }
+        : undefined,
+    );
+  }, [sessionId, selectedTone, selectedModel, stream]);
+
+  const handleRestart = useCallback(() => {
+    // Snapshot current summaries to detect when activities are replaced
+    restartSnapshotRef.current = new Map(
+      stream.activities.map(a => [a.activityId, a.summary]),
+    );
+    // Show skeletons on all existing cards
+    setRegeneratingIds(new Set(stream.activities.map(a => a.activityId)));
+
+    const newStackId = crypto.randomUUID();
+    const startedAt = new Date().toISOString();
+    const repo = stream.sessionInfo?.repo || '';
+
+    stackMetadataRef.current = {
+      startedAt,
+      tone: selectedTone,
+      model: selectedModel,
+      repo,
+    };
+
+    const newStack: PrintStack = {
+      id: newStackId,
+      sessionId,
+      tone: selectedTone,
+      repo,
+      startedAt,
+      stackStatus: 'streaming',
+      activities: [],
+    };
+    savePrintStack(newStack).catch((err) => console.error('Failed to save initial stack', err));
+    setCurrentStackId(newStackId);
+
+    // Restart from beginning, replacing existing cards as data arrives
+    stream.play(sessionId, selectedTone.toLowerCase(), selectedModel, {
+      restart: true,
+      preserveVersionsFrom: stream.activities,
+    });
+  }, [sessionId, selectedTone, selectedModel, stream]);
 
   const handlePause = useCallback(() => {
     stream.pause();
   }, [stream]);
 
   const handleStop = useCallback(() => {
-    // Finalize current stack before clearing
+    // Finalize current stack
     if (currentStackId && stackMetadataRef.current) {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
@@ -327,81 +479,18 @@ export function SessionPage({
         activities: activitiesToSave,
       };
       flushSave(finalStack);
+      setLoadedStack(finalStack);
     }
 
     setCurrentStackId(null);
     stream.stop();
-    setActiveLabelIndex(0);
   }, [stream, currentStackId, sessionId, flushSave]);
-
-  // Derive the active activity for the reading pane
-  const activeActivity = stream.activities[activeLabelIndex] ?? null;
-
-  const [regeneratingActivityId, setRegeneratingActivityId] = useState<string | null>(null);
 
   const handleRegenerate = useCallback(async () => {
     const activity = activeActivity;
     if (!activity) return;
-
-    // Check version cache first — instant switch if available
-    const key = versionKey(selectedTone, selectedModel);
-    if (activity.versions?.[key]) {
-      stream.switchActivityVersion(activity.activityId, selectedTone, selectedModel);
-      return;
-    }
-
-    // No cached version — call API
-    setRegeneratingActivityId(activity.activityId);
-    try {
-      const res = await fetch('/api/regenerate-summary', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          summary: activity.summary,
-          activityType: activity.activityType,
-          tone: selectedTone.toLowerCase(),
-          model: selectedModel,
-        }),
-      });
-      if (!res.ok) throw new Error('Regeneration failed');
-      const { summary } = await res.json();
-      stream.patchActivityVersion(activity.activityId, selectedTone, selectedModel, { summary });
-
-      // Persist updated versions to disk
-      const stackId = currentStackId || loadedStack?.id;
-      if (stackId) {
-        const normalizedTone = selectedTone.toLowerCase();
-        const newKey = versionKey(normalizedTone, selectedModel);
-        const newVersion = { summary, tone: normalizedTone, model: selectedModel, status: activity.status, codeReview: activity.codeReview };
-        const updatedActivities = stream.activities.map(a => {
-          const { imageUrl, ...rest } = a;
-          if (a.activityId !== activity.activityId) return rest;
-          return {
-            ...rest,
-            summary, tone: normalizedTone, model: selectedModel,
-            versions: { ...rest.versions, [newKey]: newVersion },
-          };
-        });
-        const src = loadedStack;
-        const meta = stackMetadataRef.current;
-        const updatedStack: PrintStack = {
-          id: stackId,
-          sessionId: src?.sessionId || stream.sessionInfo?.sessionId || sessionId,
-          tone: src?.tone || meta?.tone || selectedTone,
-          repo: src?.repo || meta?.repo || stream.sessionInfo?.repo || '',
-          startedAt: src?.startedAt || meta?.startedAt || new Date().toISOString(),
-          stackStatus: 'complete',
-          activities: updatedActivities,
-        };
-        flushSave(updatedStack);
-        setLoadedStack(updatedStack);
-      }
-    } catch (err) {
-      console.error('Failed to regenerate activity:', err);
-    } finally {
-      setRegeneratingActivityId(null);
-    }
-  }, [activeActivity, selectedTone, selectedModel, stream, currentStackId, loadedStack, sessionId, flushSave]);
+    await regenerateActivities([activity], selectedTone, selectedModel);
+  }, [activeActivity, selectedTone, selectedModel, regenerateActivities]);
 
   const handleVersionSelect = useCallback((tone: string, model: string) => {
     if (!activeActivity) return;
@@ -485,7 +574,7 @@ export function SessionPage({
   const showRegenerate = !!(
     activeActivity &&
     (stream.sessionState === 'complete' || stream.sessionState === 'ready') &&
-    regeneratingActivityId === null &&
+    regeneratingIds.size === 0 &&
     (selectedTone.toLowerCase() !== (activeActivity.tone || '').toLowerCase() ||
      selectedModel !== activeActivity.model)
   );
@@ -625,6 +714,7 @@ export function SessionPage({
         sessionRepo={stream.sessionInfo?.repo || sessionRepo}
         sessionState={stream.sessionState}
         onPlay={handlePlay}
+        onRestart={handleRestart}
         onPause={handlePause}
         onStop={handleStop}
         onSessionClose={() => {
@@ -670,7 +760,7 @@ export function SessionPage({
                         selected={index === activeLabelIndex}
                         onClick={() => setActiveLabelIndex(index)}
                       >
-                        {regeneratingActivityId === activity.activityId ? (
+                        {regeneratingIds.has(activity.activityId) ? (
                           <LabelCardSkeleton />
                         ) : (
                           <LabelPreview

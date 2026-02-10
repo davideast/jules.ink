@@ -17,6 +17,7 @@ export interface TopBarProps {
   onSessionInput?: (id: string) => void;
   onSessionClose?: () => void;
   onPlay?: () => void;
+  onRestart?: () => void;
   onPause?: () => void;
   onStop?: () => void;
   onSettings?: () => void;
@@ -68,6 +69,7 @@ export function TopBar({
   onSessionInput,
   onSessionClose,
   onPlay,
+  onRestart,
   onPause,
   onStop,
   onSettings,
@@ -160,7 +162,7 @@ export function TopBar({
             ) : null}
 
             {/* Transport controls */}
-            {sessionState === 'idle' || sessionState === 'ready' || !sessionState ? (
+            {sessionState === 'idle' || !sessionState ? (
               <button className={PILL} onClick={onPlay}>
                 <span
                   className="material-symbols-outlined text-[16px]"
@@ -170,11 +172,19 @@ export function TopBar({
                 </span>
                 <span className="text-[13px] font-semibold">Play</span>
               </button>
-            ) : sessionState === 'complete' ? (
-              <button className={PILL} onClick={onPlay}>
-                <span className="material-symbols-outlined text-[16px]" style={FILLED}>replay</span>
-                <span className="text-[13px] font-semibold">Replay</span>
-              </button>
+            ) : sessionState === 'ready' || sessionState === 'complete' ? (
+              <div className="flex items-center gap-2">
+                <button className={PILL} onClick={onPlay}>
+                  <span className="material-symbols-outlined text-[16px]" style={FILLED}>play_arrow</span>
+                  <span className="text-[13px] font-semibold">Play</span>
+                </button>
+                {onRestart ? (
+                  <button className={PILL} onClick={onRestart}>
+                    <span className="material-symbols-outlined text-[16px]" style={FILLED}>replay</span>
+                    <span className="text-[13px] font-semibold">Restart</span>
+                  </button>
+                ) : null}
+              </div>
             ) : sessionState === 'streaming' ? (
               <div className="flex items-center gap-2">
                 <button className={PILL} onClick={onPause}>
