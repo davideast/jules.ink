@@ -31,7 +31,7 @@ import { EXPERT_PERSONAS } from '../../lib/personas';
 import type { FileTreeNode } from '../FileTree';
 
 const RIGHT_PANEL_TABS: Tab[] = [
-  { id: 'narration', label: 'Narration' },
+  { id: 'narration', label: 'Activity' },
   { id: 'analysis', label: 'Analysis' },
   { id: 'recs', label: 'Recs' },
   { id: 'memory', label: 'Memory' },
@@ -151,7 +151,7 @@ export function SessionPage({
       if (cancelled) return;
       if (stack && stack.activities.length > 0) {
         skipAutoSelectRef.current = true;
-        stream.loadFromStack(stack);
+        stream.loadFromStack(stack, sessionStatus);
         setSelectedTone(stack.tone);
         setLoadedStack(stack);
         // Sync model to first activity so ReadingPane matches the label
@@ -191,7 +191,7 @@ export function SessionPage({
 
   // Bulk-switch cached versions when tone/model selection changes on a completed session
   useEffect(() => {
-    if (stream.sessionState !== 'complete') return;
+    if (stream.sessionState !== 'complete' && stream.sessionState !== 'ready') return;
     stream.switchAllVersions(selectedTone, selectedModel);
   }, [selectedTone, selectedModel]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -260,33 +260,45 @@ export function SessionPage({
   const handlePlay = useCallback(() => {
     if (stream.sessionState === 'paused') {
       stream.resume();
-    } else {
-      const newStackId = crypto.randomUUID();
-      const startedAt = new Date().toISOString();
-      const repo = stream.sessionInfo?.repo || '';
-
-      stackMetadataRef.current = {
-        startedAt,
-        tone: selectedTone,
-        model: selectedModel,
-        repo
-      };
-
-      const newStack: PrintStack = {
-        id: newStackId,
-        sessionId: sessionId,
-        tone: selectedTone,
-        repo: repo,
-        startedAt: startedAt,
-        stackStatus: 'streaming',
-        activities: [],
-      };
-      savePrintStack(newStack).catch((err) => console.error('Failed to save initial stack', err));
-      setCurrentStackId(newStackId);
-
-      stream.play(sessionId, selectedTone.toLowerCase(), selectedModel);
+      return;
     }
-  }, [sessionId, selectedTone, selectedModel, stream]);
+
+    // If we have loaded data and ALL activities have cached versions for
+    // the target tone+model, just switch versions instantly — no stream needed.
+    if (loadedStack && stream.activities.length > 0) {
+      const targetKey = versionKey(selectedTone, selectedModel);
+      const allCached = stream.activities.every(a => a.versions?.[targetKey]);
+      if (allCached) {
+        stream.switchAllVersions(selectedTone, selectedModel);
+        return;
+      }
+    }
+
+    const newStackId = crypto.randomUUID();
+    const startedAt = new Date().toISOString();
+    const repo = stream.sessionInfo?.repo || '';
+
+    stackMetadataRef.current = {
+      startedAt,
+      tone: selectedTone,
+      model: selectedModel,
+      repo
+    };
+
+    const newStack: PrintStack = {
+      id: newStackId,
+      sessionId: sessionId,
+      tone: selectedTone,
+      repo: repo,
+      startedAt: startedAt,
+      stackStatus: 'streaming',
+      activities: [],
+    };
+    savePrintStack(newStack).catch((err) => console.error('Failed to save initial stack', err));
+    setCurrentStackId(newStackId);
+
+    stream.play(sessionId, selectedTone.toLowerCase(), selectedModel);
+  }, [sessionId, selectedTone, selectedModel, stream, loadedStack]);
 
   const handlePause = useCallback(() => {
     stream.pause();
@@ -472,7 +484,7 @@ export function SessionPage({
   const versionCount = activeActivity?.versions ? Object.keys(activeActivity.versions).length : 0;
   const showRegenerate = !!(
     activeActivity &&
-    stream.sessionState === 'complete' &&
+    (stream.sessionState === 'complete' || stream.sessionState === 'ready') &&
     regeneratingActivityId === null &&
     (selectedTone.toLowerCase() !== (activeActivity.tone || '').toLowerCase() ||
      selectedModel !== activeActivity.model)

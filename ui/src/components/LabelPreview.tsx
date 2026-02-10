@@ -23,23 +23,52 @@ function truncateMiddle(text: string, maxLen: number): string {
   return text.slice(0, front) + '...' + text.slice(-back);
 }
 
-/** Render inline code (backtick-delimited) within a text segment. */
-function renderInlineCode(text: string, keyPrefix: string) {
-  const parts = text.split('`');
-  return parts.map((part, i) => {
-    if (i % 2 === 1) {
-      return (
+/** Render inline markdown (bold + code) within a text segment. */
+function renderInlineMarkdown(text: string, keyPrefix: string) {
+  // Match **bold** and `code` spans in order of appearance
+  const pattern = /(\*\*(.+?)\*\*|`([^`]+)`)/g;
+  const elements: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let i = 0;
+
+  while ((match = pattern.exec(text)) !== null) {
+    // Text before this match
+    if (match.index > lastIndex) {
+      elements.push(<span key={`${keyPrefix}-t${i}`}>{text.slice(lastIndex, match.index)}</span>);
+      i++;
+    }
+
+    if (match[3] !== undefined) {
+      // `code` span
+      elements.push(
         <code
-          key={`${keyPrefix}-${i}`}
+          key={`${keyPrefix}-c${i}`}
           className="bg-[#e0e0e0] px-1 py-px rounded-sm font-mono"
           style={{ fontSize: '0.9em' }}
         >
-          {part}
+          {match[3]}
         </code>
       );
+    } else if (match[2] !== undefined) {
+      // **bold** span
+      elements.push(
+        <strong key={`${keyPrefix}-b${i}`} className="font-semibold">
+          {match[2]}
+        </strong>
+      );
     }
-    return <span key={`${keyPrefix}-${i}`}>{part}</span>;
-  });
+
+    lastIndex = match.index + match[0].length;
+    i++;
+  }
+
+  // Trailing text
+  if (lastIndex < text.length) {
+    elements.push(<span key={`${keyPrefix}-t${i}`}>{text.slice(lastIndex)}</span>);
+  }
+
+  return elements.length > 0 ? elements : [<span key={`${keyPrefix}-t0`}>{text}</span>];
 }
 
 /**
@@ -75,12 +104,12 @@ function renderSummary(text: string) {
   const paragraphs = splitIntoParagraphs(text);
 
   if (paragraphs.length <= 1) {
-    return <>{renderInlineCode(text, 'p0')}</>;
+    return <>{renderInlineMarkdown(text, 'p0')}</>;
   }
 
   return paragraphs.map((para, i) => (
     <span key={i} style={{ display: 'block', marginBottom: i < paragraphs.length - 1 ? '0.5em' : 0 }}>
-      {renderInlineCode(para, `p${i}`)}
+      {renderInlineMarkdown(para, `p${i}`)}
     </span>
   ));
 }

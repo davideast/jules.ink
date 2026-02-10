@@ -41,7 +41,7 @@ export interface UseSessionStreamReturn {
   patchActivityVersion: (activityId: string, tone: string, model: string, data: Partial<ActivityVersion>) => void;
   switchActivityVersion: (activityId: string, tone: string, model: string) => void;
   switchAllVersions: (tone: string, model: string) => void;
-  loadFromStack: (stack: PrintStack) => void;
+  loadFromStack: (stack: PrintStack, sessionStatus?: string) => void;
   regenerate: (sourceStack: PrintStack, tone: string, model: string) => void;
   error: string | null;
 }
@@ -222,7 +222,7 @@ export function useSessionStream(): UseSessionStreamReturn {
     ));
   }, []);
 
-  const loadFromStack = useCallback((stack: PrintStack) => {
+  const loadFromStack = useCallback((stack: PrintStack, sessionStatus?: string) => {
     const hydrated = stack.activities.map(a => {
       const normalizedTone = a.tone?.toLowerCase() || '';
       const key = normalizedTone && a.model ? versionKey(normalizedTone, a.model) : null;
@@ -234,8 +234,15 @@ export function useSessionStream(): UseSessionStreamReturn {
       return { ...a, tone: normalizedTone, imageUrl: undefined, versions };
     });
     setActivities(hydrated);
-    setSessionInfo({ sessionId: stack.sessionId, repo: stack.repo, title: '', state: 'completed' });
-    setSessionState('complete');
+    setSessionInfo({ sessionId: stack.sessionId, repo: stack.repo, title: '', state: sessionStatus || 'completed' });
+
+    // Loading from cache never means "fully streamed" — only the session:complete
+    // SSE event should set 'complete'. Cache loads are always 'ready' (Play) unless failed.
+    if (sessionStatus === 'failed') {
+      setSessionState('failed');
+    } else {
+      setSessionState('ready');
+    }
   }, []);
 
   const regenerate = useCallback((sourceStack: PrintStack, tone: string, model: string) => {
@@ -301,7 +308,7 @@ export function useSessionStream(): UseSessionStreamReturn {
       if (a.activityId !== activityId) return a;
       const v = a.versions?.[key];
       if (!v) return a;
-      return { ...a, summary: v.summary, tone: v.tone, model: v.model, status: v.status, codeReview: v.codeReview };
+      return { ...a, summary: v.summary, tone: v.tone, model: v.model, status: v.status ?? a.status, codeReview: v.codeReview ?? a.codeReview };
     }));
   }, []);
 
@@ -310,7 +317,7 @@ export function useSessionStream(): UseSessionStreamReturn {
     setActivities(prev => prev.map(a => {
       const v = a.versions?.[key];
       if (!v) return a;
-      return { ...a, summary: v.summary, tone: v.tone, model: v.model, status: v.status, codeReview: v.codeReview };
+      return { ...a, summary: v.summary, tone: v.tone, model: v.model, status: v.status ?? a.status, codeReview: v.codeReview ?? a.codeReview };
     }));
   }, []);
 

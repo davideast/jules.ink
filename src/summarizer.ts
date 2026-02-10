@@ -1,9 +1,13 @@
 import { GoogleGenAI } from '@google/genai';
 import { Ollama } from 'ollama';
 import { type Activity, type JulesClient } from '@google/jules-sdk';
-// @google/jules-mcp is imported dynamically to avoid hard dependency in CI/test environments
-type SessionStateResult = Awaited<ReturnType<typeof import('@google/jules-mcp')['getSessionState']>>;
-type ReviewChangesResult = Awaited<ReturnType<typeof import('@google/jules-mcp')['codeReview']>>;
+// Inline type for session state — @google/jules-mcp is not installed; dynamic import in
+// getCachedSessionState() fails gracefully at runtime (returns undefined).
+interface SessionStateResult {
+  prompt?: string;
+  status?: string;
+  lastAgentMessage?: { content: string };
+}
 import parseDiff from 'parse-diff';
 import micromatch from 'micromatch';
 import { encode } from 'gpt-tokenizer';
@@ -157,8 +161,12 @@ export class SessionSummarizer {
     }
     try {
       const client = await this.getJulesClient();
-      const { getSessionState } = await import('@google/jules-mcp');
-      const result = await getSessionState(client, this.sessionId);
+      const session = client.session(this.sessionId);
+      const info = await session.info();
+      const result: SessionStateResult = {
+        prompt: (info as any).prompt,
+        status: (info as any).state,
+      };
       this.cachedSessionState = { result, fetchedAt: now };
       return result;
     } catch (err) {
@@ -271,79 +279,55 @@ export class SessionSummarizer {
     `;
   }
 
-  // --- NEW: Generate rolling status narrative ---
+  // --- Generate rolling status narrative ---
   async generateStatus(activityIndex: number): Promise<string> {
-    if (!this.sessionId) throw new Error('sessionId required for generateStatus');
-
-    const client = await this.getJulesClient();
-    const { codeReview } = await import('@google/jules-mcp');
-
-    const [sessionState, review] = await Promise.all([
-      this.getCachedSessionState(),
-      codeReview(client, this.sessionId).catch(() => undefined),
-    ]);
-
-    if (!sessionState) throw new Error('Could not fetch session state');
-
+    const sessionState = await this.getCachedSessionState();
     const trajectory = this.getTrajectoryString();
-    const insights = review?.insights;
-    const filesSummary = review?.summary;
+    const goalBlock = sessionState?.prompt ? `SESSION GOAL: ${sessionState.prompt}` : '';
+    const statusBlock = sessionState?.status ? `SESSION STATUS: ${sessionState.status}` : '';
 
     return this.executeRequest(`
       ROLE: You are a Session Activity Reporter.
       TASK: Describe what happened at this point in the coding session.
 
-      SESSION GOAL: ${sessionState.prompt || 'Unknown'}
-      SESSION STATUS: ${sessionState.status}
+      ${goalBlock}
+      ${statusBlock}
       ACTIVITY COUNT: ${activityIndex + 1}
 
       TRAJECTORY (last 5 activities):
       ${trajectory}
 
-      ${filesSummary ? `FILES TOUCHED: ${filesSummary.totalFiles} total (${filesSummary.created} created, ${filesSummary.modified} modified, ${filesSummary.deleted} deleted)` : ''}
-      ${insights ? `INSIGHTS: ${insights.planRegenerations} plan regenerations, ${insights.failedCommandCount} failed commands, ${insights.completionAttempts} completion attempts` : ''}
-      ${sessionState.lastAgentMessage ? `LAST AGENT MESSAGE: ${sessionState.lastAgentMessage.content.slice(0, 200)}` : ''}
-
       INSTRUCTIONS:
       1. Describe what phase of work was underway (planning, implementing, debugging, testing, etc.)
       2. Summarize what was accomplished toward the session goal
-      3. Note any signals worth watching (failed commands, plan regenerations, etc.)
-      4. LENGTH: 200-500 chars
-      5. STYLE: Neutral, informative. Past tense. No first person.
+      3. LENGTH: 200-500 chars
+      4. STYLE: Neutral, informative. Past tense. No first person.
 
       OUTPUT:
     `, { preserveNewlines: true });
   }
 
-  // --- NEW: Generate per-activity code review ---
-  async generateCodeReview(activityId: string): Promise<string> {
-    if (!this.sessionId) throw new Error('sessionId required for generateCodeReview');
-
-    const client = await this.getJulesClient();
-    const { showDiff, codeReview } = await import('@google/jules-mcp');
-
-    const [diff, review] = await Promise.all([
-      showDiff(client, this.sessionId, { activityId }),
-      codeReview(client, this.sessionId, { activityId }).catch(() => undefined),
-    ]);
-
-    if (!diff.unidiffPatch) throw new Error('No diff available for this activity');
+  // --- Generate per-activity code review from provided diff ---
+  async generateCodeReview(
+    _activityId: string,
+    unidiffPatch: string,
+    files: { path: string; additions: number; deletions: number }[],
+  ): Promise<string> {
+    if (!unidiffPatch) throw new Error('No diff available for this activity');
 
     // Truncate large diffs to stay within token limits
-    const truncatedPatch = diff.unidiffPatch.length > 8000
-      ? diff.unidiffPatch.slice(0, 8000) + '\n... (truncated)'
-      : diff.unidiffPatch;
+    const truncatedPatch = unidiffPatch.length > 8000
+      ? unidiffPatch.slice(0, 8000) + '\n... (truncated)'
+      : unidiffPatch;
 
     return this.executeRequest(`
       ROLE: You are a Code Reviewer.
       TASK: Provide a concise code review for the changes in this activity.
 
-      FILES CHANGED: ${diff.files.map(f => `${f.path} (+${f.additions}/-${f.deletions})`).join(', ')}
+      FILES CHANGED: ${files.map(f => `${f.path} (+${f.additions}/-${f.deletions})`).join(', ')}
 
       DIFF:
       ${truncatedPatch}
-
-      ${review?.formatted ? `REVIEW CONTEXT:\n${review.formatted.slice(0, 1000)}` : ''}
 
       INSTRUCTIONS:
       Format your output EXACTLY as follows with each section on its own line:

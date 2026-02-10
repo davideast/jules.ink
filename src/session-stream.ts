@@ -108,8 +108,8 @@ export async function* streamSession(
       // Parallel: summary + status + code review
       const summaryPromise = summarizer.generateRollingSummary(rollingSummary, activity);
       const statusPromise = summarizer.generateStatus(count).catch(() => undefined);
-      const reviewPromise = isChangeSet
-        ? summarizer.generateCodeReview(activity.id).catch(() => undefined)
+      const reviewPromise = isChangeSet && unidiffPatch
+        ? summarizer.generateCodeReview(activity.id, unidiffPatch, files).catch(() => undefined)
         : Promise.resolve(undefined);
 
       const [summary, status, review] = await Promise.all([summaryPromise, statusPromise, reviewPromise]);
