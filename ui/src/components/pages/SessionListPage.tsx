@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { TopBar } from '../TopBar';
 import { SessionRow } from '../SessionRow';
 import type { SessionStatus } from '../SessionRow';
@@ -45,6 +45,39 @@ export function SessionListPage({
   const [search, setSearch] = useState('');
   const [nextPageToken, setNextPageToken] = useState<string | null>(initialNextPageToken);
   const [loadingMore, setLoadingMore] = useState(false);
+
+  // Background refresh: SSR renders from cache instantly, then we
+  // fetch fresh data from the network API and merge in any new sessions.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/sessions?pageSize=25')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (cancelled || !data) return;
+        const fresh: Session[] = data.sessions;
+        setSessions(prev => {
+          const existingIds = new Set(prev.map(s => s.id));
+          const newSessions = fresh.filter(s => !existingIds.has(s.id));
+          if (newSessions.length === 0) {
+            // Update existing sessions in-place (status may have changed)
+            const freshMap = new Map(fresh.map(s => [s.id, s]));
+            return prev.map(s => freshMap.get(s.id) ?? s);
+          }
+          // Merge new + updated, sort by updateTime desc
+          const freshMap = new Map(fresh.map(s => [s.id, s]));
+          const merged = prev.map(s => freshMap.get(s.id) ?? s);
+          for (const s of newSessions) merged.push(s);
+          merged.sort((a, b) =>
+            new Date(b.updateTime || b.createTime).getTime() -
+            new Date(a.updateTime || a.createTime).getTime()
+          );
+          return merged;
+        });
+        if (data.nextPageToken) setNextPageToken(data.nextPageToken);
+      })
+      .catch(() => {}); // Silently fail — cached data still visible
+    return () => { cancelled = true; };
+  }, []);
 
   const handleLoadMore = useCallback(async () => {
     if (!nextPageToken || loadingMore) return;

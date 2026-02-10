@@ -1,16 +1,19 @@
 /**
  * Page Load Benchmark
  *
- * Measures TTFB, FCP, LCP, DOM Content Loaded, and full load time
- * for the session page. Runs N iterations and reports stats.
+ * Measures TTFB, FCP, LCP, DOM Content Loaded, and full load time.
+ * Supports both the session page and the home page (session list).
  *
  * Usage:
- *   npx tsx benchmarks/page-load.ts                         # defaults
- *   npx tsx benchmarks/page-load.ts --session <id>          # specific session
- *   npx tsx benchmarks/page-load.ts --runs 10               # more iterations
- *   npx tsx benchmarks/page-load.ts --base-url http://...   # custom server
- *   npx tsx benchmarks/page-load.ts --json                  # machine-readable output
- *   npx tsx benchmarks/page-load.ts --save                  # append to benchmarks/results.jsonl
+ *   bun benchmarks/page-load.ts                         # session page (default)
+ *   bun benchmarks/page-load.ts --page home             # home / session list page
+ *   bun benchmarks/page-load.ts --page session          # session page (explicit)
+ *   bun benchmarks/page-load.ts --page all              # both pages
+ *   bun benchmarks/page-load.ts --session <id>          # specific session
+ *   bun benchmarks/page-load.ts --runs 10               # more iterations
+ *   bun benchmarks/page-load.ts --base-url http://...   # custom server
+ *   bun benchmarks/page-load.ts --json                  # machine-readable output
+ *   bun benchmarks/page-load.ts --save                  # append to benchmarks/results.jsonl
  */
 
 import { chromium } from 'playwright';
@@ -29,6 +32,7 @@ function opt(name: string, fallback: string): string {
 }
 
 const SESSION_ID = opt('session', '');
+const PAGE_TARGET = opt('page', 'session') as 'home' | 'session' | 'all';
 const RUNS = parseInt(opt('runs', '5'), 10);
 const BASE_URL = opt('base-url', 'http://localhost:4321');
 const JSON_OUTPUT = flag('json');
@@ -44,21 +48,24 @@ interface RunMetrics {
   domInteractive: number;
 }
 
-interface Summary {
+interface PageSummary {
+  page: string;
   url: string;
   runs: number;
   timestamp: string;
   gitBranch: string;
   gitSha: string;
-  metrics: {
-    ttfb: Stats;
-    fcp: Stats;
-    lcp: Stats;
-    domContentLoaded: Stats;
-    loaded: Stats;
-    domInteractive: Stats;
-  };
+  metrics: MetricsSummary;
   raw: RunMetrics[];
+}
+
+interface MetricsSummary {
+  ttfb: Stats;
+  fcp: Stats;
+  lcp: Stats;
+  domContentLoaded: Stats;
+  loaded: Stats;
+  domInteractive: Stats;
 }
 
 interface Stats {
@@ -84,7 +91,6 @@ function computeStats(values: number[]): Stats {
 async function resolveSessionId(): Promise<string> {
   if (SESSION_ID) return SESSION_ID;
 
-  // Auto-detect from local stacks
   const stacksDir = path.join(process.cwd(), '.jules', 'stacks');
   try {
     const files = fs.readdirSync(stacksDir).filter(f => f.endsWith('.json'));
@@ -100,7 +106,7 @@ async function resolveSessionId(): Promise<string> {
   } catch {}
 
   console.error('No session ID provided and none found in .jules/stacks/');
-  console.error('Usage: npx tsx benchmarks/page-load.ts --session <id>');
+  console.error('Usage: bun benchmarks/page-load.ts --session <id>');
   process.exit(1);
 }
 
@@ -132,7 +138,6 @@ async function measureRun(url: string, run: number): Promise<RunMetrics> {
 
   await page.goto(url, { waitUntil: 'networkidle' });
 
-  // Extract Navigation Timing
   const timing = await page.evaluate(() => {
     const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
     const paintEntries = performance.getEntriesByType('paint');
@@ -153,19 +158,21 @@ async function measureRun(url: string, run: number): Promise<RunMetrics> {
   return { run, ...timing };
 }
 
-async function main() {
-  const sessionId = await resolveSessionId();
-  const url = `${BASE_URL}/session?id=${sessionId}`;
-  const git = getGitInfo();
-
+async function benchmarkPage(
+  pageName: string,
+  url: string,
+  git: { branch: string; sha: string },
+): Promise<PageSummary> {
   if (!JSON_OUTPUT) {
-    console.log(`\nBenchmark: ${url}`);
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`Benchmark: ${pageName}`);
+    console.log(`URL: ${url}`);
     console.log(`Branch: ${git.branch} (${git.sha})`);
-    console.log(`Runs: ${RUNS}\n`);
+    console.log(`Runs: ${RUNS}`);
+    console.log('='.repeat(60));
   }
 
   const results: RunMetrics[] = [];
-
   for (let i = 0; i < RUNS; i++) {
     if (!JSON_OUTPUT) {
       process.stdout.write(`  Run ${i + 1}/${RUNS}...`);
@@ -177,7 +184,8 @@ async function main() {
     }
   }
 
-  const summary: Summary = {
+  const summary: PageSummary = {
+    page: pageName,
     url,
     runs: RUNS,
     timestamp: new Date().toISOString(),
@@ -194,27 +202,63 @@ async function main() {
     raw: results,
   };
 
-  if (JSON_OUTPUT) {
-    console.log(JSON.stringify(summary, null, 2));
-  } else {
+  if (!JSON_OUTPUT) {
     console.log('\n--- Results ---\n');
     console.log(formatTable(summary.metrics));
+  }
 
-    if (SAVE) {
-      const outPath = path.join(process.cwd(), 'benchmarks', 'results.jsonl');
-      fs.appendFileSync(outPath, JSON.stringify(summary) + '\n');
+  return summary;
+}
+
+async function main() {
+  const git = getGitInfo();
+  const pages: { name: string; url: string }[] = [];
+
+  if (PAGE_TARGET === 'home' || PAGE_TARGET === 'all') {
+    pages.push({ name: 'home', url: `${BASE_URL}/` });
+  }
+  if (PAGE_TARGET === 'session' || PAGE_TARGET === 'all') {
+    const sessionId = await resolveSessionId();
+    pages.push({ name: 'session', url: `${BASE_URL}/session?id=${sessionId}` });
+  }
+
+  const summaries: PageSummary[] = [];
+  for (const p of pages) {
+    summaries.push(await benchmarkPage(p.name, p.url, git));
+  }
+
+  if (JSON_OUTPUT) {
+    console.log(JSON.stringify(summaries.length === 1 ? summaries[0] : summaries, null, 2));
+  }
+
+  if (SAVE) {
+    const outPath = path.join(process.cwd(), 'benchmarks', 'results.jsonl');
+    for (const s of summaries) {
+      fs.appendFileSync(outPath, JSON.stringify(s) + '\n');
+    }
+    if (!JSON_OUTPUT) {
       console.log(`\nSaved to ${outPath}`);
     }
   }
 
-  if (SAVE && JSON_OUTPUT) {
-    const outPath = path.join(process.cwd(), 'benchmarks', 'results.jsonl');
-    fs.appendFileSync(outPath, JSON.stringify(summary) + '\n');
+  // Print comparison table when running both pages
+  if (!JSON_OUTPUT && summaries.length > 1) {
+    console.log(`\n${'='.repeat(60)}`);
+    console.log('Comparison (medians)');
+    console.log('='.repeat(60));
+    const metricKeys = ['ttfb', 'fcp', 'lcp', 'domContentLoaded', 'loaded', 'domInteractive'] as const;
+    const header = padRight('Metric', 20) + summaries.map(s => padRight(s.page, 12)).join('');
+    console.log(header);
+    console.log('-'.repeat(header.length));
+    for (const key of metricKeys) {
+      const row = padRight(key, 20) + summaries.map(s => padRight(`${s.metrics[key].median}ms`, 12)).join('');
+      console.log(row);
+    }
   }
 }
 
-function formatTable(metrics: Summary['metrics']): string {
-  const keys = Object.keys(metrics) as (keyof typeof metrics)[];
+function formatTable(metrics: MetricsSummary): string {
+  const keys = Object.keys(metrics) as (keyof MetricsSummary)[];
   const header = padRight('Metric', 20) + padRight('Min', 10) + padRight('Median', 10) + padRight('Mean', 10) + padRight('P95', 10) + padRight('Max', 10);
   const divider = '-'.repeat(header.length);
 

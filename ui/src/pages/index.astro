@@ -14,9 +14,17 @@ if (keysConfigured) {
   try {
     const { connect } = await import('@google/jules-sdk');
     const jules = connect();
-    const page = await jules.sessions({ pageSize: 25 });
 
-    initialSessions = page.sessions.map((s: any) => {
+    // Cache-only: pure local read, no network. Instant SSR.
+    // The previous page load's jules.sessions() call populated the cache
+    // via write-through. The client will background-sync for fresh data.
+    const cached = await jules.select({
+      from: 'sessions' as const,
+      limit: 25,
+      order: 'desc' as const,
+    });
+
+    initialSessions = cached.map((s: any) => {
       const rawState = String(s.state || '').toLowerCase();
       let status: 'completed' | 'in_progress' | 'failed' = 'in_progress';
       if (rawState === 'completed') status = 'completed';
@@ -33,7 +41,7 @@ if (keysConfigured) {
         updateTime: s.updateTime,
       };
     });
-    initialNextPageToken = page.nextPageToken || null;
+    // No pageToken from select() — pagination handled by background refresh
   } catch (err: any) {
     console.error('[SSR] Failed to load sessions:', err);
     initialError = err.message || 'Failed to load sessions';

@@ -33,8 +33,10 @@
     "test": "vitest",
     "test:smoke": "vitest run tests/cli.smoke.test.ts",
     "gen:assets": "tsx scripts/create-base-template.ts",
-    "bench": "tsx benchmarks/page-load.ts",
-    "bench:save": "tsx benchmarks/page-load.ts --save"
+    "bench": "bun benchmarks/page-load.ts --page all",
+    "bench:home": "bun benchmarks/page-load.ts --page home",
+    "bench:session": "bun benchmarks/page-load.ts --page session",
+    "bench:save": "bun benchmarks/page-load.ts --page all --save"
   },
   "keywords": [
     "jules",
