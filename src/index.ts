@@ -16,5 +16,9 @@ export { default as thermal } from './print.js';
 export type { device, config } from './print.js';
 
 export { TONE_PRESETS } from './tone-presets.js';
+export { EXPERT_PERSONAS, resolvePersona, resolvePersonaByName } from './expert-personas.js';
+export type { ExpertPersona } from './expert-personas.js';
+export { loadSkillRules } from './skill-loader.js';
+export type { SkillRule } from './skill-loader.js';
 export { loadTones, saveTone, deleteTone } from './tones.js';
 export type { Tone } from './tones.js';

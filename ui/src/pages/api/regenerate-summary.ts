@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
-import { SessionSummarizer } from 'jules-ink';
+import path from 'node:path';
+import { SessionSummarizer, resolvePersonaByName } from 'jules-ink';
 import { readEnv } from '../../lib/api-keys';
 
 /** Regenerate a single activity summary with a new tone/model. */
@@ -27,12 +28,18 @@ export const POST: APIRoute = async ({ request }) => {
     });
   }
 
+  // Resolve persona by display name; fall back to raw tone string for custom tones
+  const persona = resolvePersonaByName(body.tone);
+  const skillsDir = path.join(process.cwd(), '.agents', 'skills');
+
   try {
     const summarizer = new SessionSummarizer({
       backend: 'cloud',
       apiKey,
       cloudModelName: body.model || 'gemini-2.5-flash-lite',
-      tone: body.tone,
+      personaId: persona?.id,
+      tone: persona ? undefined : body.tone,
+      skillsDir,
     });
 
     const newSummary = await summarizer.styleTransfer(body.summary, body.activityType);

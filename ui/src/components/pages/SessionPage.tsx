@@ -1,39 +1,72 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { TopBar } from '../TopBar';
 import type { SessionState } from '../TopBar';
-import { ToneBar } from '../ToneBar';
+import { ToneTrigger } from '../ToneTrigger';
+import { ToneModal } from '../ToneModal';
+import { PanelTabs } from '../PanelTabs';
+import type { Tab } from '../PanelTabs';
 import { TimelineEntry } from '../TimelineEntry';
 import { LabelCard } from '../LabelCard';
 import { LabelPreview } from '../LabelPreview';
 import { LabelCardSkeleton } from '../LabelCardSkeleton';
 import { ModelSelector, MODELS } from '../ModelSelector';
 import { ReadingPane } from '../ReadingPane';
+import { AnalysisPane } from '../AnalysisPane';
+import type { KeyFile } from '../AnalysisPane';
+import { FileAnalysisView } from '../FileAnalysisView';
+import type { FileAnalysisData } from '../FileAnalysisView';
 import { DiffView } from '../DiffView';
-import { ToneCreator } from '../ToneCreator';
-import type { SavedTone } from '../ToneCreator';
 import { StatusBar } from '../StatusBar';
 import { PrinterDropdown } from '../PrinterDropdown';
 import type { PrinterOption } from '../PrinterDropdown';
 import { useSessionStream } from '../../hooks/useSessionStream';
 import { usePrinters } from '../../hooks/usePrinters';
-import { useTones } from '../../hooks/useTones';
 import {
   type PrintStack,
   savePrintStack,
   findLatestStack,
   versionKey,
 } from '../../lib/print-stack';
+import { EXPERT_PERSONAS } from '../../lib/personas';
+import type { FileTreeNode } from '../FileTree';
 
-type RightPanelMode = 'reading' | 'creating' | 'diff';
-
-const DEFAULT_TONES = [
-  'Noir',
-  'Professional',
-  'Pirate',
-  'Shakespearean',
-  'Excited',
-  'Haiku',
+const RIGHT_PANEL_TABS: Tab[] = [
+  { id: 'narration', label: 'Narration' },
+  { id: 'analysis', label: 'Analysis' },
+  { id: 'recs', label: 'Recs' },
+  { id: 'memory', label: 'Memory' },
 ];
+
+/** Convert a flat file list into a nested FileTreeNode[] structure. */
+function buildFileTree(
+  files: { path: string; additions: number; deletions: number }[],
+): FileTreeNode[] {
+  const root: FileTreeNode[] = [];
+  for (const file of files) {
+    const parts = file.path.split('/');
+    let level = root;
+    for (let i = 0; i < parts.length; i++) {
+      const name = parts[i];
+      if (i === parts.length - 1) {
+        level.push({
+          name,
+          type: 'file',
+          status: 'M',
+          additions: file.additions,
+          deletions: file.deletions,
+        });
+      } else {
+        let dir = level.find(n => n.name === name && n.type === 'directory');
+        if (!dir) {
+          dir = { name, type: 'directory', children: [] };
+          level.push(dir);
+        }
+        level = dir.children!;
+      }
+    }
+  }
+  return root;
+}
 
 interface SessionPageProps {
   sessionId?: string;
@@ -54,9 +87,10 @@ export function SessionPage({
   initialTone,
   initialModel,
 }: SessionPageProps) {
-  const [selectedTone, setSelectedTone] = useState<string>(initialTone || 'Noir');
-  const [rightPanelMode, setRightPanelMode] =
-    useState<RightPanelMode>('reading');
+  const [selectedTone, setSelectedTone] = useState<string>(initialTone || 'React Perf Expert');
+  const [customInstructions, setCustomInstructions] = useState('');
+  const [activeTab, setActiveTab] = useState('narration');
+  const [toneModalOpen, setToneModalOpen] = useState(false);
   const [printerDropdownOpen, setPrinterDropdownOpen] = useState(false);
   const [activeLabelIndex, setActiveLabelIndex] = useState(0);
   const [selectedModel, setSelectedModel] = useState(initialModel || 'gemini-2.5-flash-lite');
@@ -64,6 +98,7 @@ export function SessionPage({
   const [currentStackId, setCurrentStackId] = useState<string | null>(null);
   const [diffFilePath, setDiffFilePath] = useState<string | null>(null);
   const [fetchingDiff, setFetchingDiff] = useState(false);
+  const [analysisFilePath, setAnalysisFilePath] = useState<string | null>(null);
   const [isLoadingStack, setIsLoadingStack] = useState(!!sessionId);
   const [loadedStack, setLoadedStack] = useState<PrintStack | null>(null);
 
@@ -77,7 +112,6 @@ export function SessionPage({
 
   const stream = useSessionStream();
   const printerHook = usePrinters();
-  const { tones: savedTones, save: saveTone, remove: removeTone } = useTones();
 
   // Map printer data to PrinterOption format
   const printerOptions: PrinterOption[] = printerHook.printers.map(p => ({
@@ -142,10 +176,7 @@ export function SessionPage({
 
   // Reset diff view when switching timeline entries
   useEffect(() => {
-    if (rightPanelMode === 'diff') {
-      setRightPanelMode('reading');
-      setDiffFilePath(null);
-    }
+    setDiffFilePath(null);
   }, [activeLabelIndex]);
 
   // Update tone in stream when selectedTone changes
@@ -369,43 +400,29 @@ export function SessionPage({
     setSelectedModel(model);
   }, [activeActivity, stream]);
 
-  const handleAddTone = useCallback(() => {
-    setRightPanelMode((prev) =>
-      prev === 'creating' ? 'reading' : 'creating',
-    );
+  // --- Tone modal ---
+  const handleToneApply = useCallback((
+    personaId: string | null,
+    instructions: string,
+    _scope: 'session' | 'global',
+  ) => {
+    if (personaId) {
+      const persona = EXPERT_PERSONAS.find(p => p.id === personaId);
+      if (persona) setSelectedTone(persona.name);
+    } else if (instructions.trim()) {
+      setSelectedTone(instructions.trim());
+    }
+    setCustomInstructions(instructions);
+    setToneModalOpen(false);
   }, []);
 
-  const handleSaveTone = useCallback(
-    (name: string, instructions: string) => {
-      if (!name.trim()) return;
-      saveTone(name, instructions);
-      setRightPanelMode('reading');
-    },
-    [saveTone],
-  );
-
-  const handleDeleteTone = useCallback((name: string) => {
-    removeTone(name);
-  }, [removeTone]);
-
-  const handleSelectSavedTone = useCallback((name: string) => {
-    setSelectedTone(name);
-    setRightPanelMode('reading');
-  }, []);
-
-  const handlePrinterSelect = useCallback((name: string | null) => {
-    setSelectedPrinter(name);
-    setPrinterDropdownOpen(false);
-  }, []);
-
+  // --- File click / diff ---
   const handleFileClick = useCallback((filePath: string) => {
     const activity = stream.activities[activeLabelIndex];
     if (!activity) return;
 
     if (activity.unidiffPatch) {
-      // Diff already available — switch immediately
       setDiffFilePath(filePath);
-      setRightPanelMode('diff');
       return;
     }
 
@@ -420,7 +437,6 @@ export function SessionPage({
         if (data?.unidiffPatch) {
           stream.patchActivity(activity.activityId, { unidiffPatch: data.unidiffPatch });
           setDiffFilePath(filePath);
-          setRightPanelMode('diff');
         }
       })
       .catch(() => {})
@@ -428,8 +444,12 @@ export function SessionPage({
   }, [stream, activeLabelIndex, sessionId]);
 
   const handleDiffBack = useCallback(() => {
-    setRightPanelMode('reading');
     setDiffFilePath(null);
+  }, []);
+
+  const handlePrinterSelect = useCallback((name: string | null) => {
+    setSelectedPrinter(name);
+    setPrinterDropdownOpen(false);
   }, []);
 
   const handleScanPrinters = useCallback(() => {
@@ -441,11 +461,10 @@ export function SessionPage({
     (p) => p.name === selectedPrinter,
   );
 
-  // All tones: defaults + saved custom tones + initialTone if not already present
-  const baseTones = [...DEFAULT_TONES, ...savedTones.map(t => t.name)];
-  const allTones = initialTone && !baseTones.includes(initialTone)
-    ? [...baseTones, initialTone]
-    : baseTones;
+  // Active persona for ToneTrigger icon and ToneModal initial state
+  const activePersona = EXPERT_PERSONAS.find(
+    p => p.name.toLowerCase() === selectedTone.toLowerCase(),
+  );
 
   // Version-aware regeneration controls
   const targetKey = activeActivity ? versionKey(selectedTone, selectedModel) : null;
@@ -458,6 +477,84 @@ export function SessionPage({
     (selectedTone.toLowerCase() !== (activeActivity.tone || '').toLowerCase() ||
      selectedModel !== activeActivity.model)
   );
+
+  // --- Analysis data derived from all activities ---
+  const analysisData = useMemo(() => {
+    const fileMap = new Map<string, { additions: number; deletions: number }>();
+    for (const a of stream.activities) {
+      for (const f of a.files) {
+        const existing = fileMap.get(f.path);
+        if (existing) {
+          existing.additions += f.additions;
+          existing.deletions += f.deletions;
+        } else {
+          fileMap.set(f.path, { additions: f.additions, deletions: f.deletions });
+        }
+      }
+    }
+
+    const entries = Array.from(fileMap.entries());
+    const totalAdditions = entries.reduce((s, [, f]) => s + f.additions, 0);
+    const totalDeletions = entries.reduce((s, [, f]) => s + f.deletions, 0);
+
+    const keyFiles: KeyFile[] = entries
+      .sort((a, b) => (b[1].additions + b[1].deletions) - (a[1].additions + a[1].deletions))
+      .slice(0, 4)
+      .map(([path, stats]) => ({
+        path,
+        additions: stats.additions,
+        deletions: stats.deletions,
+        description: `${stats.additions + stats.deletions} lines changed`,
+      }));
+
+    const fileTree: FileTreeNode[] = buildFileTree(
+      entries.map(([path, stats]) => ({ path, ...stats })),
+    );
+
+    return {
+      totalFiles: fileMap.size,
+      totalAdditions,
+      totalDeletions,
+      keyFiles,
+      fileTree,
+    };
+  }, [stream.activities]);
+
+  // --- File analysis drill-in data ---
+  const fileAnalysisData = useMemo<FileAnalysisData | null>(() => {
+    if (!analysisFilePath) return null;
+
+    // Find the activity containing this file
+    const activity = stream.activities.find(a =>
+      a.files.some(f => f.path === analysisFilePath),
+    );
+    if (!activity) return null;
+
+    const fileStats = activity.files.find(f => f.path === analysisFilePath);
+    const relatedFiles = activity.files
+      .filter(f => f.path !== analysisFilePath)
+      .map(f => f.path);
+
+    return {
+      filePath: analysisFilePath,
+      additions: fileStats?.additions ?? 0,
+      deletions: fileStats?.deletions ?? 0,
+      commitSummary: activity.summary?.slice(0, 120) || '',
+      explanation: activity.codeReview || activity.summary || 'No analysis available yet.',
+      patterns: [],
+      tradeoffs: [],
+      relatedFiles,
+      unidiffPatch: activity.unidiffPatch,
+    };
+  }, [analysisFilePath, stream.activities]);
+
+  const handleAnalysisFileClick = useCallback((filePath: string) => {
+    setAnalysisFilePath(filePath);
+  }, []);
+
+  const handleAnalysisDrillBack = useCallback(() => {
+    setAnalysisFilePath(null);
+  }, []);
 
   // Format time from createTime or use index
   const formatTime = (activity: typeof stream.activities[0]) => {
@@ -524,6 +621,11 @@ export function SessionPage({
         }}
         onSettings={() => { window.location.href = '/settings'; }}
       >
+        <ToneTrigger
+          label={activePersona?.name || selectedTone}
+          icon={activePersona?.icon}
+          onClick={() => setToneModalOpen(true)}
+        />
         <ModelSelector
           selectedModel={selectedModel}
           onModelChange={setSelectedModel}
@@ -531,16 +633,8 @@ export function SessionPage({
         />
       </TopBar>
       <div className="flex flex-1 overflow-hidden">
-        {/* Left panel: tone bar + timeline */}
+        {/* Left panel: timeline */}
         <main className="w-[55%] bg-[#16161a] flex flex-col relative border-r border-[#2a2a35]">
-          <ToneBar
-            tones={allTones}
-            selectedTone={selectedTone}
-            onSelectTone={setSelectedTone}
-            onAddTone={handleAddTone}
-            addButtonActive={rightPanelMode === 'creating'}
-            disabled={stream.sessionState === 'streaming'}
-          />
           <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col pb-12">
             <div className="flex flex-col gap-[40px] w-full pt-8 px-8">
               {stream.activities.length === 0 && stream.sessionState === 'idle' ? (
@@ -588,57 +682,97 @@ export function SessionPage({
           </div>
         </main>
 
-        {/* Right panel: reading pane or tone creator */}
+        {/* Right panel: tabbed */}
         <aside className="w-[45%] bg-sidebar-bg flex flex-col relative h-full">
-          {rightPanelMode === 'diff' && diffFilePath && activeActivity?.unidiffPatch ? (
+          {diffFilePath && activeActivity?.unidiffPatch ? (
             <DiffView
               filePath={diffFilePath}
               unidiffPatch={activeActivity.unidiffPatch}
               onBack={handleDiffBack}
             />
-          ) : rightPanelMode === 'diff' && fetchingDiff ? (
+          ) : fetchingDiff ? (
             <div className="flex-1 flex items-center justify-center text-[#72728a] text-sm">
               Loading diff...
             </div>
-          ) : rightPanelMode === 'creating' ? (
-            <ToneCreator
-              savedTones={savedTones}
-              onSave={handleSaveTone}
-              onDeleteTone={handleDeleteTone}
-              onSelectTone={handleSelectSavedTone}
-              onClose={() => setRightPanelMode('reading')}
-            />
           ) : (
-            <ReadingPane
-              toneName={activeActivity?.tone || selectedTone}
-              modelName={MODELS.find(m => m.id === (activeActivity?.model || selectedModel))?.name}
-              summary={
-                activeActivity?.summary ||
-                (stream.sessionState === 'idle'
-                  ? 'Select a tone and press Play to begin streaming.'
-                  : 'Waiting for data...')
-              }
-              files={
-                activeActivity?.files.map(f => ({
-                  status: 'M' as const,
-                  path: f.path,
-                  additions: f.additions,
-                  deletions: f.deletions,
-                })) ?? []
-              }
-              status={activeActivity?.status}
-              codeReview={activeActivity?.codeReview}
-              onFileClick={activeActivity?.files.length ? handleFileClick : undefined}
-              onRegenerate={showRegenerate ? handleRegenerate : undefined}
-              regenerateLabel={hasCachedVersion ? 'Switch' : 'Regenerate'}
-              versionCount={versionCount}
-              unidiffPatch={activeActivity?.unidiffPatch}
-              versions={activeActivity?.versions}
-              onVersionSelect={handleVersionSelect}
-            />
+            <>
+              <PanelTabs
+                tabs={RIGHT_PANEL_TABS}
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
+              />
+              {activeTab === 'narration' ? (
+                <ReadingPane
+                  toneName={activeActivity?.tone || selectedTone}
+                  modelName={MODELS.find(m => m.id === (activeActivity?.model || selectedModel))?.name}
+                  summary={
+                    activeActivity?.summary ||
+                    (stream.sessionState === 'idle'
+                      ? 'Select a tone and press Play to begin streaming.'
+                      : 'Waiting for data...')
+                  }
+                  files={
+                    activeActivity?.files.map(f => ({
+                      status: 'M' as const,
+                      path: f.path,
+                      additions: f.additions,
+                      deletions: f.deletions,
+                    })) ?? []
+                  }
+                  status={activeActivity?.status}
+                  codeReview={activeActivity?.codeReview}
+                  onFileClick={activeActivity?.files.length ? handleFileClick : undefined}
+                  onRegenerate={showRegenerate ? handleRegenerate : undefined}
+                  regenerateLabel={hasCachedVersion ? 'Switch' : 'Regenerate'}
+                  versionCount={versionCount}
+                  unidiffPatch={activeActivity?.unidiffPatch}
+                  versions={activeActivity?.versions}
+                  onVersionSelect={handleVersionSelect}
+                />
+              ) : activeTab === 'analysis' ? (
+                analysisFilePath && fileAnalysisData ? (
+                  <FileAnalysisView
+                    data={fileAnalysisData}
+                    onBack={handleAnalysisDrillBack}
+                    onFileClick={handleAnalysisFileClick}
+                  />
+                ) : (
+                  <AnalysisPane
+                    summary={
+                      stream.activities.length > 0
+                        ? `Session analysis across ${stream.activities.length} activit${stream.activities.length === 1 ? 'y' : 'ies'} in ${stream.sessionInfo?.repo || sessionRepo || 'this repository'}.`
+                        : undefined
+                    }
+                    totalFiles={analysisData.totalFiles}
+                    totalAdditions={analysisData.totalAdditions}
+                    totalDeletions={analysisData.totalDeletions}
+                    keyFiles={analysisData.keyFiles}
+                    fileTree={analysisData.fileTree}
+                    onFileClick={handleAnalysisFileClick}
+                  />
+                )
+              ) : activeTab === 'recs' ? (
+                <div className="flex-1 flex items-center justify-center text-[#72728a] text-sm">
+                  Recommendations coming soon
+                </div>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-[#72728a] text-sm">
+                  Memory coming soon
+                </div>
+              )}
+            </>
           )}
         </aside>
       </div>
+
+      {/* Tone customization modal */}
+      <ToneModal
+        isOpen={toneModalOpen}
+        initialPersonaId={activePersona?.id ?? null}
+        initialCustomInstructions={customInstructions}
+        onClose={() => setToneModalOpen(false)}
+        onApply={handleToneApply}
+      />
 
       {/* Printer dropdown overlay */}
       {printerDropdownOpen && (

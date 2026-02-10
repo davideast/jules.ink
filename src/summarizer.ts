@@ -8,6 +8,8 @@ import parseDiff from 'parse-diff';
 import micromatch from 'micromatch';
 import { encode } from 'gpt-tokenizer';
 import Bottleneck from 'bottleneck';
+import { type ExpertPersona, resolvePersona, resolvePersonaByName, formatRulesForPrompt } from './expert-personas.js';
+import { loadSkillRules } from './skill-loader.js';
 
 // --- Configuration Constants ---
 const CLOUD_MODEL_NAME = 'gemini-2.5-flash-lite';
@@ -25,24 +27,8 @@ const IGNORE_PATTERNS = [
   '**/*.d.ts'
 ];
 
-export type TonePreset = 'professional' | 'pirate' | 'shakespearean' | 'excited' | 'haiku' | 'noir';
-
-const TONE_MODIFIERS: Record<TonePreset, string> = {
-  professional: '',
-  pirate: 'Write in the style of a pirate. Use nautical terms and pirate slang like "arr", "matey", "ye", "be", etc.',
-  shakespearean: 'Write in Shakespearean English with dramatic flair. Use "doth", "hark", "forsooth", "verily", etc.',
-  excited: 'Write with EXTREME enthusiasm!!! Use exclamation marks and emojis like 🎉🚀✨💥!',
-  haiku: 'Format your response as a haiku (5-7-5 syllable structure). Be poetic and zen.',
-  noir: 'Write in the style of a 1940s noir detective narration. Dark, moody, metaphorical.',
-};
-
-/** Resolves a tone string to its modifier. Accepts preset names or custom instructions. */
-function resolveToneModifier(tone: string | undefined): string {
-  if (!tone || tone === 'professional') return '';
-  if (tone in TONE_MODIFIERS) return TONE_MODIFIERS[tone as TonePreset];
-  // Treat as custom tone instruction
-  return tone;
-}
+// Keep TonePreset as a type alias for backward compatibility
+export type TonePreset = string;
 
 interface ActivityLogEntry {
   index: number;
@@ -64,6 +50,8 @@ export interface SummarizerConfig {
   localModelName?: string;
   cloudModelName?: string;
   tone?: string;
+  personaId?: string;
+  skillsDir?: string;
   tier?: 'free' | 'tier1';
   sessionId?: string;
 }
@@ -71,7 +59,10 @@ export interface SummarizerConfig {
 export class SessionSummarizer {
   private backend: 'cloud' | 'local';
   private localModelName: string;
-  private toneModifier: string;
+  private persona: ExpertPersona | undefined;
+  private customToneModifier: string;
+  private skillsDir: string | undefined;
+  private skillContext: string | null = null; // null = not yet loaded
   private genAI: GoogleGenAI | null = null;
   private genModel: any | null = null;
   private ollama: Ollama | null = null;
@@ -84,8 +75,17 @@ export class SessionSummarizer {
   constructor(config: SummarizerConfig = {}) {
     this.backend = config.backend || 'local';
     this.localModelName = config.localModelName || LOCAL_MODEL_DEFAULT;
-    this.toneModifier = resolveToneModifier(config.tone);
+    this.skillsDir = config.skillsDir;
     this.sessionId = config.sessionId;
+
+    // Resolve persona: try personaId first, then match tone string to persona name, then fall back to custom tone
+    if (config.personaId) {
+      this.persona = resolvePersona(config.personaId);
+    } else if (config.tone) {
+      this.persona = resolvePersonaByName(config.tone);
+    }
+    // If no persona matched and a tone string was given, use it as a custom modifier
+    this.customToneModifier = this.persona ? '' : (config.tone || '');
 
     if (this.backend === 'cloud') {
       const key = config.apiKey || process.env.GEMINI_API_KEY;
@@ -101,6 +101,44 @@ export class SessionSummarizer {
       this.ollama = new Ollama();
       this.limiter = new Bottleneck({ maxConcurrent: 1 });
     }
+  }
+
+  /** Lazily load skill rules for the active persona. Cached after first load. */
+  private async getSkillContext(): Promise<string> {
+    if (this.skillContext !== null) return this.skillContext;
+    if (!this.persona?.skillRef) {
+      this.skillContext = '';
+      return '';
+    }
+    try {
+      const rules = await loadSkillRules(this.persona.skillRef, {
+        tags: this.persona.focusTags,
+        maxRules: this.persona.maxRules,
+        skillsDir: this.skillsDir,
+      });
+      this.skillContext = formatRulesForPrompt(rules);
+    } catch {
+      this.skillContext = '';
+    }
+    return this.skillContext;
+  }
+
+  /** Build the persona prompt blocks (role, expertise, personality). */
+  private async buildPersonaBlocks(): Promise<{ roleBlock: string; expertiseBlock: string; personalityBlock: string }> {
+    if (!this.persona) {
+      // Custom tone fallback
+      return {
+        roleBlock: 'You are the AI Developer.',
+        expertiseBlock: '',
+        personalityBlock: this.customToneModifier ? `PERSONALITY/TONE: ${this.customToneModifier}` : '',
+      };
+    }
+    const expertise = await this.getSkillContext();
+    return {
+      roleBlock: this.persona.role,
+      expertiseBlock: expertise ? `\n      EXPERTISE CONTEXT (best practices guiding your analysis):\n      ${expertise}` : '',
+      personalityBlock: this.persona.personality ? `\n      PERSONALITY: ${this.persona.personality}` : '',
+    };
   }
 
   private async getJulesClient(): Promise<JulesClient> {
@@ -149,9 +187,9 @@ export class SessionSummarizer {
 
     let summary: string;
     if (isCodeTask) {
-      summary = await this.executeRequest(this.getCodePrompt(activityContext, sessionGoal, trajectory));
+      summary = await this.executeRequest(await this.getCodePrompt(activityContext, sessionGoal, trajectory));
     } else {
-      summary = await this.executeRequest(this.getPlanningPrompt(activityContext, sessionGoal, trajectory));
+      summary = await this.executeRequest(await this.getPlanningPrompt(activityContext, sessionGoal, trajectory));
     }
 
     // Record in activity log
@@ -166,15 +204,16 @@ export class SessionSummarizer {
   }
 
   // --- PROMPT 1: THE ACTIVE CODER (For Diffs) ---
-  private getCodePrompt(context: any, sessionGoal?: string, trajectory?: string): string {
-    const toneInstruction = this.toneModifier ? `\n      5. TONE: ${this.toneModifier}` : '';
+  private async getCodePrompt(context: any, sessionGoal?: string, trajectory?: string): Promise<string> {
+    const { roleBlock, expertiseBlock, personalityBlock } = await this.buildPersonaBlocks();
     const goalBlock = sessionGoal ? `\n      SESSION GOAL: ${sessionGoal}` : '';
     const trajectoryBlock = trajectory ? `\n      TRAJECTORY SO FAR:\n      ${trajectory}` : '';
+    const hasExpertise = !!expertiseBlock;
 
     return `
-      ROLE: You are the AI Developer.
-      TASK: Report the technical action taken in this activity, grounded in the session's goal and trajectory.
-      ${goalBlock}${trajectoryBlock}
+      ROLE: ${roleBlock}
+      TASK: Report the technical action taken in this activity, grounded in the session's goal and trajectory.${hasExpertise ? ' Weave in 1-2 brief, actionable recommendations from your expertise where relevant to the changes.' : ''}
+      ${goalBlock}${trajectoryBlock}${expertiseBlock}
 
       INPUT DATA GUIDANCE:
       - 'status': 'truncated_large_file' -> Infer changes from 'affectedScopes'.
@@ -191,22 +230,22 @@ export class SessionSummarizer {
          - NO: "I am updating..." or "Updated code" (too vague)
       2. FORMATTING: Wrap ALL filenames/classes/functions in backticks (\`).
       3. SPECIFICITY: Reference specific files, functions, or variables affected. Explain WHY the change was made relative to the session goal.
-      4. LENGTH: 200-400 chars.${toneInstruction}
+      4. LENGTH: ${hasExpertise ? '250-500' : '200-400'} chars.${personalityBlock ? `\n      5. ${personalityBlock}` : ''}
 
       OUTPUT:
     `;
   }
 
   // --- PROMPT 2: THE OBJECTIVE REPORTER (For Plans/Messages) ---
-  private getPlanningPrompt(context: any, sessionGoal?: string, trajectory?: string): string {
-    const toneInstruction = this.toneModifier ? `\n      6. TONE: ${this.toneModifier}` : '';
+  private async getPlanningPrompt(context: any, sessionGoal?: string, trajectory?: string): Promise<string> {
+    const { roleBlock, expertiseBlock, personalityBlock } = await this.buildPersonaBlocks();
     const goalBlock = sessionGoal ? `\n      SESSION GOAL: ${sessionGoal}` : '';
     const trajectoryBlock = trajectory ? `\n      TRAJECTORY SO FAR:\n      ${trajectory}` : '';
 
     return `
-      ROLE: You are a Project Logger.
+      ROLE: ${roleBlock}
       TASK: Summarize the event, grounded in the session's goal and what has happened so far.
-      ${goalBlock}${trajectoryBlock}
+      ${goalBlock}${trajectoryBlock}${expertiseBlock}
 
       NEW ACTIVITY:
       ${JSON.stringify(context)}
@@ -226,7 +265,7 @@ export class SessionSummarizer {
          - Be specific about what the plan/message addresses.
 
       4. LENGTH: 200-400 chars.
-      5. FORMATTING: Wrap filenames/classes in backticks (\`) when referenced.${toneInstruction}
+      5. FORMATTING: Wrap filenames/classes in backticks (\`) when referenced.${personalityBlock ? `\n      6. ${personalityBlock}` : ''}
 
       OUTPUT:
     `;
@@ -251,8 +290,8 @@ export class SessionSummarizer {
     const filesSummary = review?.summary;
 
     return this.executeRequest(`
-      ROLE: You are a Session Status Reporter.
-      TASK: Provide a "where are we now" narrative for this coding session.
+      ROLE: You are a Session Activity Reporter.
+      TASK: Describe what happened at this point in the coding session.
 
       SESSION GOAL: ${sessionState.prompt || 'Unknown'}
       SESSION STATUS: ${sessionState.status}
@@ -266,11 +305,11 @@ export class SessionSummarizer {
       ${sessionState.lastAgentMessage ? `LAST AGENT MESSAGE: ${sessionState.lastAgentMessage.content.slice(0, 200)}` : ''}
 
       INSTRUCTIONS:
-      1. Describe the current phase of work (planning, implementing, debugging, testing, etc.)
-      2. Summarize progress toward the session goal
+      1. Describe what phase of work was underway (planning, implementing, debugging, testing, etc.)
+      2. Summarize what was accomplished toward the session goal
       3. Note any signals worth watching (failed commands, plan regenerations, etc.)
       4. LENGTH: 200-500 chars
-      5. STYLE: Neutral, informative. Present tense. No first person.
+      5. STYLE: Neutral, informative. Past tense. No first person.
 
       OUTPUT:
     `, { preserveNewlines: true });
@@ -333,27 +372,27 @@ export class SessionSummarizer {
   }
 
   async styleTransfer(existingSummary: string, activityType: string): Promise<string> {
-    const toneInstruction = this.toneModifier || 'professional tone';
+    const { roleBlock, expertiseBlock, personalityBlock } = await this.buildPersonaBlocks();
     const isCode = activityType === 'changeSet';
+    const hasExpertise = !!expertiseBlock;
 
     const raw = await this.executeRequest(`
-      ROLE: You are a Style Transfer Writer.
-      TASK: Rewrite the following summary in a new tone while preserving ALL technical details.
+      ROLE: ${roleBlock}
+      TASK: Rewrite the following summary through your expert lens while preserving ALL technical details.${hasExpertise ? ' Weave in 1-2 brief, actionable recommendations from your expertise where relevant.' : ''}
 
       ORIGINAL SUMMARY:
       ${existingSummary}
 
-      ACTIVITY TYPE: ${isCode ? 'Code Change' : 'Planning/Message'}
+      ACTIVITY TYPE: ${isCode ? 'Code Change' : 'Planning/Message'}${expertiseBlock}
 
       INSTRUCTIONS:
-      1. TONE: ${toneInstruction}
-      2. Preserve ALL technical details: filenames, function names, class names, and backtick-wrapped references.
-      3. Change ONLY voice, style, and personality. Do NOT add or remove technical content.
-      4. Keep the same approximate length (200-400 chars).
-      5. Maintain backtick formatting for all code references.
-      6. Do NOT start with "I" or use first person.
-      7. Output PLAIN TEXT only. No markdown formatting — no *, **, _, or quotation marks for emphasis or dialogue.
-      8. Write as a single continuous paragraph. No line breaks.
+      1. Preserve ALL technical details: filenames, function names, class names, and backtick-wrapped references.
+      2. ${hasExpertise ? 'Add brief, actionable insight from your expertise where the code change is relevant. Keep recommendations concise.' : 'Rewrite the summary in the voice described above.'}
+      3. LENGTH: ${hasExpertise ? '250-500' : '200-400'} chars.
+      4. Maintain backtick formatting for all code references.
+      5. Do NOT start with "I" or use first person.
+      6. Output PLAIN TEXT only. No markdown formatting — no *, **, _, or quotation marks for emphasis or dialogue.
+      7. Write as a single continuous paragraph. No line breaks.${personalityBlock ? `\n      8. ${personalityBlock}` : ''}
 
       OUTPUT:
     `);
