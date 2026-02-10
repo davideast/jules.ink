@@ -321,6 +321,15 @@ export function SessionPage({
     }
   }, [activeActivity, selectedTone, selectedModel, stream]);
 
+  const handleVersionSelect = useCallback((tone: string, model: string) => {
+    if (!activeActivity) return;
+    stream.switchActivityVersion(activeActivity.activityId, tone, model);
+    // Update selectors to match the chosen version
+    const titleCaseTone = tone.charAt(0).toUpperCase() + tone.slice(1);
+    setSelectedTone(titleCaseTone);
+    setSelectedModel(model);
+  }, [activeActivity, stream]);
+
   const handleAddTone = useCallback(() => {
     setRightPanelMode((prev) =>
       prev === 'creating' ? 'reading' : 'creating',
@@ -407,7 +416,8 @@ export function SessionPage({
     activeActivity &&
     stream.sessionState === 'complete' &&
     regeneratingActivityId === null &&
-    (selectedTone !== activeActivity.tone || selectedModel !== activeActivity.model)
+    (selectedTone.toLowerCase() !== (activeActivity.tone || '').toLowerCase() ||
+     selectedModel !== activeActivity.model)
   );
 
   // Format time from createTime or use index
@@ -584,6 +594,8 @@ export function SessionPage({
               regenerateLabel={hasCachedVersion ? 'Switch' : 'Regenerate'}
               versionCount={versionCount}
               unidiffPatch={activeActivity?.unidiffPatch}
+              versions={activeActivity?.versions}
+              onVersionSelect={handleVersionSelect}
             />
           )}
         </aside>

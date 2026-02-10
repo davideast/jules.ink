@@ -224,13 +224,14 @@ export function useSessionStream(): UseSessionStreamReturn {
 
   const loadFromStack = useCallback((stack: PrintStack) => {
     const hydrated = stack.activities.map(a => {
-      const key = a.tone && a.model ? versionKey(a.tone, a.model) : null;
+      const normalizedTone = a.tone?.toLowerCase() || '';
+      const key = normalizedTone && a.model ? versionKey(normalizedTone, a.model) : null;
       const existing = a.versions ?? {};
       // Hydrate legacy activities that have no versions map
       const versions = key && !existing[key]
-        ? { ...existing, [key]: { summary: a.summary, tone: a.tone!, model: a.model!, status: a.status, codeReview: a.codeReview } }
+        ? { ...existing, [key]: { summary: a.summary, tone: normalizedTone, model: a.model!, status: a.status, codeReview: a.codeReview } }
         : existing;
-      return { ...a, imageUrl: undefined, versions };
+      return { ...a, tone: normalizedTone, imageUrl: undefined, versions };
     });
     setActivities(hydrated);
     setSessionInfo({ sessionId: stack.sessionId, repo: stack.repo, title: '', state: 'completed' });
@@ -277,16 +278,17 @@ export function useSessionStream(): UseSessionStreamReturn {
   const patchActivityVersion = useCallback((
     activityId: string, tone: string, model: string, data: Partial<ActivityVersion>,
   ) => {
-    const key = versionKey(tone, model);
+    const normalizedTone = tone.toLowerCase();
+    const key = versionKey(normalizedTone, model);
     setActivities(prev => prev.map(a => {
       if (a.activityId !== activityId) return a;
       const newVersion: ActivityVersion = {
-        summary: data.summary ?? a.summary, tone, model,
+        summary: data.summary ?? a.summary, tone: normalizedTone, model,
         status: data.status ?? a.status, codeReview: data.codeReview ?? a.codeReview,
       };
       return {
         ...a,
-        summary: newVersion.summary, tone, model,
+        summary: newVersion.summary, tone: normalizedTone, model,
         status: newVersion.status, codeReview: newVersion.codeReview,
         versions: { ...a.versions, [key]: newVersion },
       };
@@ -294,7 +296,7 @@ export function useSessionStream(): UseSessionStreamReturn {
   }, []);
 
   const switchActivityVersion = useCallback((activityId: string, tone: string, model: string) => {
-    const key = versionKey(tone, model);
+    const key = versionKey(tone.toLowerCase(), model);
     setActivities(prev => prev.map(a => {
       if (a.activityId !== activityId) return a;
       const v = a.versions?.[key];
@@ -304,7 +306,7 @@ export function useSessionStream(): UseSessionStreamReturn {
   }, []);
 
   const switchAllVersions = useCallback((tone: string, model: string) => {
-    const key = versionKey(tone, model);
+    const key = versionKey(tone.toLowerCase(), model);
     setActivities(prev => prev.map(a => {
       const v = a.versions?.[key];
       if (!v) return a;
