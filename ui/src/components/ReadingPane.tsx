@@ -22,6 +22,8 @@ export interface ReadingPaneProps {
   codeReview?: string;
   onFileClick?: (filePath: string) => void;
   onRegenerate?: () => void;
+  regenerateLabel?: string;
+  versionCount?: number;
   unidiffPatch?: string;
 }
 
@@ -93,7 +95,7 @@ function fixMarkdownLists(text: string): string {
   return result.trim();
 }
 
-export function ReadingPane({ toneName, modelName, summary, files = [], onShare, status, codeReview, onFileClick, onRegenerate, unidiffPatch }: ReadingPaneProps) {
+export function ReadingPane({ toneName, modelName, summary, files = [], onShare, status, codeReview, onFileClick, onRegenerate, regenerateLabel, versionCount, unidiffPatch }: ReadingPaneProps) {
   const [showDiff, setShowDiff] = useState(false);
 
   return (
@@ -109,13 +111,18 @@ export function ReadingPane({ toneName, modelName, summary, files = [], onShare,
               {modelName}
             </span>
           ) : null}
+          {versionCount && versionCount > 1 ? (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[#72728a] text-[10px] font-medium border border-[#2a2a35]">
+              {versionCount} versions
+            </span>
+          ) : null}
           {onRegenerate ? (
             <button
               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-[#fbfbfe]/20 bg-transparent text-[#fbfbfe] hover:bg-[#fbfbfe] hover:text-[#16161a] transition-all text-[10px] font-bold tracking-widest uppercase ml-auto"
               onClick={onRegenerate}
             >
-              <span className="material-symbols-outlined text-[14px]">refresh</span>
-              Regenerate
+              <span className="material-symbols-outlined text-[14px]">{regenerateLabel === 'Switch' ? 'swap_horiz' : 'refresh'}</span>
+              {regenerateLabel || 'Regenerate'}
             </button>
           ) : null}
         </div>

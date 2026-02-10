@@ -21,6 +21,7 @@ import {
   type PrintStack,
   savePrintStack,
   findLatestStack,
+  versionKey,
 } from '../../lib/print-stack';
 
 type RightPanelMode = 'reading' | 'creating' | 'diff';
@@ -147,6 +148,12 @@ export function SessionPage({
   useEffect(() => {
     stream.setModel(selectedModel);
   }, [selectedModel, stream]);
+
+  // Bulk-switch cached versions when tone/model selection changes on a completed session
+  useEffect(() => {
+    if (stream.sessionState !== 'complete') return;
+    stream.switchAllVersions(selectedTone, selectedModel);
+  }, [selectedTone, selectedModel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced persist of activities to PrintStack
   useEffect(() => {
@@ -284,6 +291,14 @@ export function SessionPage({
     const activity = activeActivity;
     if (!activity) return;
 
+    // Check version cache first — instant switch if available
+    const key = versionKey(selectedTone, selectedModel);
+    if (activity.versions?.[key]) {
+      stream.switchActivityVersion(activity.activityId, selectedTone, selectedModel);
+      return;
+    }
+
+    // No cached version — call API
     setRegeneratingActivityId(activity.activityId);
     try {
       const res = await fetch('/api/regenerate-summary', {
@@ -298,11 +313,7 @@ export function SessionPage({
       });
       if (!res.ok) throw new Error('Regeneration failed');
       const { summary } = await res.json();
-      stream.patchActivity(activity.activityId, {
-        summary,
-        tone: selectedTone,
-        model: selectedModel,
-      });
+      stream.patchActivityVersion(activity.activityId, selectedTone, selectedModel, { summary });
     } catch (err) {
       console.error('Failed to regenerate activity:', err);
     } finally {
@@ -388,7 +399,10 @@ export function SessionPage({
     ? [...baseTones, initialTone]
     : baseTones;
 
-  // Show regenerate when the active activity's tone/model differs from the current selection
+  // Version-aware regeneration controls
+  const targetKey = activeActivity ? versionKey(selectedTone, selectedModel) : null;
+  const hasCachedVersion = !!(targetKey && activeActivity?.versions?.[targetKey]);
+  const versionCount = activeActivity?.versions ? Object.keys(activeActivity.versions).length : 0;
   const showRegenerate = !!(
     activeActivity &&
     stream.sessionState === 'complete' &&
@@ -567,6 +581,8 @@ export function SessionPage({
               codeReview={activeActivity?.codeReview}
               onFileClick={activeActivity?.files.length ? handleFileClick : undefined}
               onRegenerate={showRegenerate ? handleRegenerate : undefined}
+              regenerateLabel={hasCachedVersion ? 'Switch' : 'Regenerate'}
+              versionCount={versionCount}
               unidiffPatch={activeActivity?.unidiffPatch}
             />
           )}

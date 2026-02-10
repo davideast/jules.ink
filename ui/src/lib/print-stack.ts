@@ -1,5 +1,17 @@
 export type StackStatus = 'streaming' | 'complete';
 
+export interface ActivityVersion {
+  summary: string;
+  tone: string;
+  model: string;
+  status?: string;
+  codeReview?: string;
+}
+
+export function versionKey(tone: string, model: string): string {
+  return `${tone.toLowerCase()}_${model}`;
+}
+
 export interface PrintStackActivity {
   index: number;
   activityId: string;
@@ -13,6 +25,7 @@ export interface PrintStackActivity {
   status?: string;
   codeReview?: string;
   unidiffPatch?: string;
+  versions?: Record<string, ActivityVersion>;
 }
 
 export interface PrintStack {

@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import type { SessionState } from '../components/TopBar';
-import type { PrintStack } from '../lib/print-stack';
+import type { PrintStack, ActivityVersion } from '../lib/print-stack';
+import { versionKey } from '../lib/print-stack';
 
 export interface SessionInfo {
   sessionId: string;
@@ -23,6 +24,7 @@ export interface ProcessedActivity {
   status?: string;
   codeReview?: string;
   unidiffPatch?: string;
+  versions?: Record<string, ActivityVersion>;
 }
 
 export interface UseSessionStreamReturn {
@@ -36,6 +38,9 @@ export interface UseSessionStreamReturn {
   setTone: (tone: string) => void;
   setModel: (model: string) => void;
   patchActivity: (activityId: string, patch: Partial<ProcessedActivity>) => void;
+  patchActivityVersion: (activityId: string, tone: string, model: string, data: Partial<ActivityVersion>) => void;
+  switchActivityVersion: (activityId: string, tone: string, model: string) => void;
+  switchAllVersions: (tone: string, model: string) => void;
   loadFromStack: (stack: PrintStack) => void;
   regenerate: (sourceStack: PrintStack, tone: string, model: string) => void;
   error: string | null;
@@ -84,6 +89,13 @@ export function useSessionStream(): UseSessionStreamReturn {
 
     es.addEventListener('activity:processed', (e) => {
       const data = JSON.parse(e.data) as ProcessedActivity & { type: string };
+      const tone = toneRef.current || '';
+      const model = modelRef.current || '';
+      const key = tone && model ? versionKey(tone, model) : null;
+      const initialVersion: ActivityVersion = {
+        summary: data.summary, tone, model,
+        status: data.status, codeReview: data.codeReview,
+      };
       const activity: ProcessedActivity = {
         index: data.index,
         activityId: data.activityId,
@@ -92,11 +104,12 @@ export function useSessionStream(): UseSessionStreamReturn {
         files: data.files,
         commitMessage: data.commitMessage,
         createTime: data.createTime,
-        tone: toneRef.current,
-        model: modelRef.current,
+        tone,
+        model,
         status: data.status,
         codeReview: data.codeReview,
         unidiffPatch: data.unidiffPatch,
+        versions: key ? { [key]: initialVersion } : {},
       };
       setActivities((prev) => [...prev, activity]);
 
@@ -210,7 +223,15 @@ export function useSessionStream(): UseSessionStreamReturn {
   }, []);
 
   const loadFromStack = useCallback((stack: PrintStack) => {
-    const hydrated = stack.activities.map(a => ({ ...a, imageUrl: undefined }));
+    const hydrated = stack.activities.map(a => {
+      const key = a.tone && a.model ? versionKey(a.tone, a.model) : null;
+      const existing = a.versions ?? {};
+      // Hydrate legacy activities that have no versions map
+      const versions = key && !existing[key]
+        ? { ...existing, [key]: { summary: a.summary, tone: a.tone!, model: a.model!, status: a.status, codeReview: a.codeReview } }
+        : existing;
+      return { ...a, imageUrl: undefined, versions };
+    });
     setActivities(hydrated);
     setSessionInfo({ sessionId: stack.sessionId, repo: stack.repo, title: '', state: 'completed' });
     setSessionState('complete');
@@ -253,5 +274,43 @@ export function useSessionStream(): UseSessionStreamReturn {
     };
   }, [closeEventSource]);
 
-  return { sessionInfo, activities, sessionState, play, pause, resume, stop, setTone, setModel, patchActivity, loadFromStack, regenerate, error };
+  const patchActivityVersion = useCallback((
+    activityId: string, tone: string, model: string, data: Partial<ActivityVersion>,
+  ) => {
+    const key = versionKey(tone, model);
+    setActivities(prev => prev.map(a => {
+      if (a.activityId !== activityId) return a;
+      const newVersion: ActivityVersion = {
+        summary: data.summary ?? a.summary, tone, model,
+        status: data.status ?? a.status, codeReview: data.codeReview ?? a.codeReview,
+      };
+      return {
+        ...a,
+        summary: newVersion.summary, tone, model,
+        status: newVersion.status, codeReview: newVersion.codeReview,
+        versions: { ...a.versions, [key]: newVersion },
+      };
+    }));
+  }, []);
+
+  const switchActivityVersion = useCallback((activityId: string, tone: string, model: string) => {
+    const key = versionKey(tone, model);
+    setActivities(prev => prev.map(a => {
+      if (a.activityId !== activityId) return a;
+      const v = a.versions?.[key];
+      if (!v) return a;
+      return { ...a, summary: v.summary, tone: v.tone, model: v.model, status: v.status, codeReview: v.codeReview };
+    }));
+  }, []);
+
+  const switchAllVersions = useCallback((tone: string, model: string) => {
+    const key = versionKey(tone, model);
+    setActivities(prev => prev.map(a => {
+      const v = a.versions?.[key];
+      if (!v) return a;
+      return { ...a, summary: v.summary, tone: v.tone, model: v.model, status: v.status, codeReview: v.codeReview };
+    }));
+  }, []);
+
+  return { sessionInfo, activities, sessionState, play, pause, resume, stop, setTone, setModel, patchActivity, patchActivityVersion, switchActivityVersion, switchAllVersions, loadFromStack, regenerate, error };
 }
