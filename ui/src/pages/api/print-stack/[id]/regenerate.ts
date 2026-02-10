@@ -28,9 +28,9 @@ export const GET: APIRoute = async ({ params, request }) => {
     });
   }
 
-  // Verify source is complete
-  if (sourceStack.stackStatus === 'streaming') {
-    return new Response(JSON.stringify({ error: 'Cannot regenerate from a streaming stack' }), {
+  // Verify source has activities to regenerate
+  if (!sourceStack.activities?.length) {
+    return new Response(JSON.stringify({ error: 'Source stack has no activities' }), {
       status: 409,
       headers: { 'Content-Type': 'application/json' },
     });

@@ -275,34 +275,40 @@ export function SessionPage({
     setActiveLabelIndex(0);
   }, [stream, currentStackId, sessionId, flushSave]);
 
-  const handleRegenerate = useCallback(() => {
-    if (!loadedStack) return;
+  // Derive the active activity for the reading pane
+  const activeActivity = stream.activities[activeLabelIndex] ?? null;
 
-    const newStackId = crypto.randomUUID();
-    const startedAt = new Date().toISOString();
+  const [regeneratingActivityId, setRegeneratingActivityId] = useState<string | null>(null);
 
-    stackMetadataRef.current = {
-      startedAt,
-      tone: selectedTone,
-      model: selectedModel,
-      repo: loadedStack.repo,
-    };
+  const handleRegenerate = useCallback(async () => {
+    const activity = activeActivity;
+    if (!activity) return;
 
-    const newStack: PrintStack = {
-      id: newStackId,
-      sessionId: loadedStack.sessionId,
-      tone: selectedTone,
-      repo: loadedStack.repo,
-      startedAt,
-      stackStatus: 'streaming',
-      parentStackId: loadedStack.id,
-      activities: [],
-    };
-    savePrintStack(newStack).catch((err) => console.error('Failed to save regen stack', err));
-    setCurrentStackId(newStackId);
-
-    stream.regenerate(loadedStack, selectedTone.toLowerCase(), selectedModel);
-  }, [loadedStack, selectedTone, selectedModel, stream]);
+    setRegeneratingActivityId(activity.activityId);
+    try {
+      const res = await fetch('/api/regenerate-summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          summary: activity.summary,
+          activityType: activity.activityType,
+          tone: selectedTone.toLowerCase(),
+          model: selectedModel,
+        }),
+      });
+      if (!res.ok) throw new Error('Regeneration failed');
+      const { summary } = await res.json();
+      stream.patchActivity(activity.activityId, {
+        summary,
+        tone: selectedTone,
+        model: selectedModel,
+      });
+    } catch (err) {
+      console.error('Failed to regenerate activity:', err);
+    } finally {
+      setRegeneratingActivityId(null);
+    }
+  }, [activeActivity, selectedTone, selectedModel, stream]);
 
   const handleAddTone = useCallback(() => {
     setRightPanelMode((prev) =>
@@ -371,9 +377,6 @@ export function SessionPage({
     printerHook.scan();
   }, [printerHook]);
 
-  // Derive the active activity for the reading pane
-  const activeActivity = stream.activities[activeLabelIndex] ?? null;
-
   // Derive selected printer data
   const selectedPrinterData = printerOptions.find(
     (p) => p.name === selectedPrinter,
@@ -385,11 +388,12 @@ export function SessionPage({
     ? [...baseTones, initialTone]
     : baseTones;
 
-  // Show regenerate button when tone differs from loaded stack and session is complete
+  // Show regenerate when the active activity's tone/model differs from the current selection
   const showRegenerate = !!(
-    loadedStack &&
-    selectedTone !== loadedStack.tone &&
-    stream.sessionState === 'complete'
+    activeActivity &&
+    stream.sessionState === 'complete' &&
+    regeneratingActivityId === null &&
+    (selectedTone !== activeActivity.tone || selectedModel !== activeActivity.model)
   );
 
   // Format time from createTime or use index
@@ -460,7 +464,7 @@ export function SessionPage({
         <ModelSelector
           selectedModel={selectedModel}
           onModelChange={setSelectedModel}
-          disabled={stream.sessionState !== 'idle' && stream.sessionState !== 'paused'}
+          disabled={stream.sessionState === 'streaming'}
         />
       </TopBar>
       <div className="flex flex-1 overflow-hidden">
@@ -497,12 +501,16 @@ export function SessionPage({
                         selected={index === activeLabelIndex}
                         onClick={() => setActiveLabelIndex(index)}
                       >
-                        <LabelPreview
-                          repo={stream.sessionInfo?.repo || sessionRepo || ''}
-                          sessionId={sessionId}
-                          summary={activity.summary}
-                          files={activity.files}
-                        />
+                        {regeneratingActivityId === activity.activityId ? (
+                          <LabelCardSkeleton />
+                        ) : (
+                          <LabelPreview
+                            repo={stream.sessionInfo?.repo || sessionRepo || ''}
+                            sessionId={sessionId}
+                            summary={activity.summary}
+                            files={activity.files}
+                          />
+                        )}
                       </LabelCard>
                     </TimelineEntry>
                   ))}

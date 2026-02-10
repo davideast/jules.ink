@@ -1,8 +1,9 @@
 import { GoogleGenAI } from '@google/genai';
 import { Ollama } from 'ollama';
 import { type Activity, type JulesClient } from '@google/jules-sdk';
-import { getSessionState, codeReview, showDiff } from '@google/jules-mcp';
-import type { SessionStateResult, ReviewChangesResult } from '@google/jules-mcp';
+// @google/jules-mcp is imported dynamically to avoid hard dependency in CI/test environments
+type SessionStateResult = Awaited<ReturnType<typeof import('@google/jules-mcp')['getSessionState']>>;
+type ReviewChangesResult = Awaited<ReturnType<typeof import('@google/jules-mcp')['codeReview']>>;
 import parseDiff from 'parse-diff';
 import micromatch from 'micromatch';
 import { encode } from 'gpt-tokenizer';
@@ -118,6 +119,7 @@ export class SessionSummarizer {
     }
     try {
       const client = await this.getJulesClient();
+      const { getSessionState } = await import('@google/jules-mcp');
       const result = await getSessionState(client, this.sessionId);
       this.cachedSessionState = { result, fetchedAt: now };
       return result;
@@ -235,6 +237,7 @@ export class SessionSummarizer {
     if (!this.sessionId) throw new Error('sessionId required for generateStatus');
 
     const client = await this.getJulesClient();
+    const { codeReview } = await import('@google/jules-mcp');
 
     const [sessionState, review] = await Promise.all([
       this.getCachedSessionState(),
@@ -278,6 +281,7 @@ export class SessionSummarizer {
     if (!this.sessionId) throw new Error('sessionId required for generateCodeReview');
 
     const client = await this.getJulesClient();
+    const { showDiff, codeReview } = await import('@google/jules-mcp');
 
     const [diff, review] = await Promise.all([
       showDiff(client, this.sessionId, { activityId }),
@@ -332,7 +336,7 @@ export class SessionSummarizer {
     const toneInstruction = this.toneModifier || 'professional tone';
     const isCode = activityType === 'changeSet';
 
-    return this.executeRequest(`
+    const raw = await this.executeRequest(`
       ROLE: You are a Style Transfer Writer.
       TASK: Rewrite the following summary in a new tone while preserving ALL technical details.
 
@@ -348,9 +352,31 @@ export class SessionSummarizer {
       4. Keep the same approximate length (200-400 chars).
       5. Maintain backtick formatting for all code references.
       6. Do NOT start with "I" or use first person.
+      7. Output PLAIN TEXT only. No markdown formatting — no *, **, _, or quotation marks for emphasis or dialogue.
+      8. Write as a single continuous paragraph. No line breaks.
 
       OUTPUT:
     `);
+    return this.cleanStyleTransferOutput(raw);
+  }
+
+  /** Strip markdown formatting artifacts that LLMs add despite being told not to. */
+  private cleanStyleTransferOutput(text: string): string {
+    // Preserve backtick code spans, strip everything else
+    const spans: string[] = [];
+    let cleaned = text.replace(/`[^`]+`/g, (m) => {
+      spans.push(m);
+      return `\x00${spans.length - 1}\x00`;
+    });
+    // Remove *, **, _ emphasis markers
+    cleaned = cleaned.replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1');
+    cleaned = cleaned.replace(/_([^_]+)_/g, '$1');
+    // Remove stray leading/trailing quotes used as dialogue
+    cleaned = cleaned.replace(/(^|\s)"(\w)/g, '$1$2');
+    cleaned = cleaned.replace(/(\w)"(\s|$)/g, '$1$2');
+    // Restore backtick spans
+    cleaned = cleaned.replace(/\x00(\d+)\x00/g, (_, i) => spans[parseInt(i)]);
+    return cleaned.trim();
   }
 
   public getLabelData(activity: Activity) {

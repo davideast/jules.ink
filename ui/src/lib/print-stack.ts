@@ -28,11 +28,16 @@ export interface PrintStack {
 
 export async function findLatestStack(sessionId: string): Promise<PrintStack | null> {
   try {
-    const params = new URLSearchParams({ sessionId, status: 'complete' });
+    const params = new URLSearchParams({ sessionId });
     const res = await fetch(`/api/print-stack?${params}`);
     if (!res.ok) throw new Error('Failed to find stack');
     const stacks: PrintStack[] = await res.json();
-    return stacks.length > 0 ? stacks[0] : null;
+    if (stacks.length === 0) return null;
+
+    // Pick the stack with the most activities — status fields are unreliable.
+    return stacks.reduce((best, s) =>
+      s.activities.length > best.activities.length ? s : best
+    );
   } catch (e) {
     console.error('Failed to find latest stack', e);
     return null;
