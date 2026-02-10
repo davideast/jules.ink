@@ -9,10 +9,10 @@ export interface LabelPreviewProps {
 
 function getBodyFontSize(text: string): number {
   const len = text.length;
-  if (len < 60) return 20;
-  if (len < 120) return 17;
-  if (len < 200) return 14;
-  if (len < 350) return 12;
+  if (len < 100) return 20;
+  if (len < 200) return 16;
+  if (len < 300) return 13;
+  if (len < 400) return 12;
   return 11;
 }
 
@@ -23,13 +23,14 @@ function truncateMiddle(text: string, maxLen: number): string {
   return text.slice(0, front) + '...' + text.slice(-back);
 }
 
-function renderSummary(text: string) {
+/** Render inline code (backtick-delimited) within a text segment. */
+function renderInlineCode(text: string, keyPrefix: string) {
   const parts = text.split('`');
   return parts.map((part, i) => {
     if (i % 2 === 1) {
       return (
         <code
-          key={i}
+          key={`${keyPrefix}-${i}`}
           className="bg-[#e0e0e0] px-1 py-px rounded-sm font-mono"
           style={{ fontSize: '0.9em' }}
         >
@@ -37,8 +38,51 @@ function renderSummary(text: string) {
         </code>
       );
     }
-    return <span key={i}>{part}</span>;
+    return <span key={`${keyPrefix}-${i}`}>{part}</span>;
   });
+}
+
+/**
+ * Split text into paragraphs of ~2 sentences for readability.
+ * Shields backtick-enclosed code (e.g. `shell.ts`) so periods
+ * inside filenames don't break sentence detection.
+ */
+function splitIntoParagraphs(text: string): string[] {
+  // Shield backtick-enclosed content from sentence splitting
+  const placeholders: string[] = [];
+  const shielded = text.replace(/`[^`]+`/g, (match) => {
+    placeholders.push(match);
+    return `\x00${placeholders.length - 1}\x00`;
+  });
+
+  // Split on sentence endings followed by whitespace
+  const sentences = shielded.match(/[^.!?]*[.!?]+(?:\s|$)|[^.!?]+$/g);
+  if (!sentences) return [text];
+
+  const cleaned = sentences.map(s => s.trim()).filter(Boolean);
+  const groups: string[] = [];
+  for (let i = 0; i < cleaned.length; i += 2) {
+    groups.push(cleaned.slice(i, i + 2).join(' '));
+  }
+
+  // Restore backtick content
+  return groups.map(g =>
+    g.replace(/\x00(\d+)\x00/g, (_, idx) => placeholders[parseInt(idx)])
+  );
+}
+
+function renderSummary(text: string) {
+  const paragraphs = splitIntoParagraphs(text);
+
+  if (paragraphs.length <= 1) {
+    return <>{renderInlineCode(text, 'p0')}</>;
+  }
+
+  return paragraphs.map((para, i) => (
+    <span key={i} style={{ display: 'block', marginBottom: i < paragraphs.length - 1 ? '0.5em' : 0 }}>
+      {renderInlineCode(para, `p${i}`)}
+    </span>
+  ));
 }
 
 export const LabelPreview = memo(function LabelPreview({
@@ -78,7 +122,7 @@ export const LabelPreview = memo(function LabelPreview({
 
       {/* Body: summary with dynamic font size */}
       <div
-        className="flex-1 overflow-hidden px-[18px] pt-[8px] font-display font-light"
+        className="flex-1 overflow-hidden px-[18px] pt-[8px] font-display font-light label-body-text"
         style={{ fontSize: bodyFontSize, lineHeight: 1.4 }}
       >
         {renderSummary(summary)}

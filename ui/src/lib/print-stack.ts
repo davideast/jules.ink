@@ -1,20 +1,42 @@
+export type StackStatus = 'streaming' | 'complete';
+
+export interface PrintStackActivity {
+  index: number;
+  activityId: string;
+  activityType: string;
+  summary: string;
+  files: { path: string; additions: number; deletions: number }[];
+  commitMessage?: string;
+  createTime?: string;
+  tone?: string;
+  model?: string;
+  status?: string;
+  codeReview?: string;
+  unidiffPatch?: string;
+}
+
 export interface PrintStack {
   id: string;
   sessionId: string;
   tone: string;
   repo: string;
   startedAt: string;
-  activities: {
-    index: number;
-    activityId: string;
-    activityType: string;
-    summary: string;
-    files: { path: string; additions: number; deletions: number }[];
-    commitMessage?: string;
-    createTime?: string;
-    tone?: string;
-    model?: string;
-  }[];
+  stackStatus?: StackStatus;
+  parentStackId?: string;
+  activities: PrintStackActivity[];
+}
+
+export async function findLatestStack(sessionId: string): Promise<PrintStack | null> {
+  try {
+    const params = new URLSearchParams({ sessionId, status: 'complete' });
+    const res = await fetch(`/api/print-stack?${params}`);
+    if (!res.ok) throw new Error('Failed to find stack');
+    const stacks: PrintStack[] = await res.json();
+    return stacks.length > 0 ? stacks[0] : null;
+  } catch (e) {
+    console.error('Failed to find latest stack', e);
+    return null;
+  }
 }
 
 export async function loadPrintStacks(): Promise<PrintStack[]> {

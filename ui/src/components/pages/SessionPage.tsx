@@ -8,6 +8,7 @@ import { LabelPreview } from '../LabelPreview';
 import { LabelCardSkeleton } from '../LabelCardSkeleton';
 import { ModelSelector, MODELS } from '../ModelSelector';
 import { ReadingPane } from '../ReadingPane';
+import { DiffView } from '../DiffView';
 import { ToneCreator } from '../ToneCreator';
 import type { SavedTone } from '../ToneCreator';
 import { StatusBar } from '../StatusBar';
@@ -19,9 +20,10 @@ import { useTones } from '../../hooks/useTones';
 import {
   type PrintStack,
   savePrintStack,
+  findLatestStack,
 } from '../../lib/print-stack';
 
-type RightPanelMode = 'reading' | 'creating';
+type RightPanelMode = 'reading' | 'creating' | 'diff';
 
 const DEFAULT_TONES = [
   'Noir',
@@ -59,8 +61,17 @@ export function SessionPage({
   const [selectedModel, setSelectedModel] = useState(initialModel || 'gemini-2.5-flash-lite');
   const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
   const [currentStackId, setCurrentStackId] = useState<string | null>(null);
+  const [diffFilePath, setDiffFilePath] = useState<string | null>(null);
+  const [fetchingDiff, setFetchingDiff] = useState(false);
+  const [isLoadingStack, setIsLoadingStack] = useState(!!sessionId);
+  const [loadedStack, setLoadedStack] = useState<PrintStack | null>(null);
 
   const stackMetadataRef = useRef<{ startedAt: string; tone: string; model: string; repo: string } | null>(null);
+
+  // Debounced save refs
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveInFlightRef = useRef(false);
+  const pendingSaveRef = useRef<PrintStack | null>(null);
 
   const stream = useSessionStream();
   const printerHook = usePrinters();
@@ -72,12 +83,60 @@ export function SessionPage({
     online: p.online,
   }));
 
+  // --- Debounced save helpers ---
+  const flushSave = useCallback(async (stack: PrintStack) => {
+    if (saveInFlightRef.current) {
+      pendingSaveRef.current = stack;
+      return;
+    }
+    saveInFlightRef.current = true;
+    try {
+      await savePrintStack(stack);
+    } catch (err) {
+      console.error('Failed to save stack', err);
+    } finally {
+      saveInFlightRef.current = false;
+      const pending = pendingSaveRef.current;
+      if (pending) {
+        pendingSaveRef.current = null;
+        flushSave(pending);
+      }
+    }
+  }, []);
+
+  // --- Load cached stack on mount ---
+  useEffect(() => {
+    if (!sessionId) {
+      setIsLoadingStack(false);
+      return;
+    }
+    let cancelled = false;
+    findLatestStack(sessionId).then(stack => {
+      if (cancelled) return;
+      if (stack && stack.activities.length > 0) {
+        stream.loadFromStack(stack);
+        setSelectedTone(stack.tone);
+        setLoadedStack(stack);
+      }
+      setIsLoadingStack(false);
+    });
+    return () => { cancelled = true; };
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps -- run once on mount
+
   // Auto-select latest activity as it arrives
   useEffect(() => {
     if (stream.activities.length > 0) {
       setActiveLabelIndex(stream.activities.length - 1);
     }
   }, [stream.activities.length]);
+
+  // Reset diff view when switching timeline entries
+  useEffect(() => {
+    if (rightPanelMode === 'diff') {
+      setRightPanelMode('reading');
+      setDiffFilePath(null);
+    }
+  }, [activeLabelIndex]);
 
   // Update tone in stream when selectedTone changes
   useEffect(() => {
@@ -89,13 +148,13 @@ export function SessionPage({
     stream.setModel(selectedModel);
   }, [selectedModel, stream]);
 
-  // Persist activities to PrintStack
+  // Debounced persist of activities to PrintStack
   useEffect(() => {
     if (!currentStackId || !stackMetadataRef.current) return;
 
     // Update repo if we have it now
     if (stream.sessionInfo?.repo && !stackMetadataRef.current.repo) {
-       stackMetadataRef.current.repo = stream.sessionInfo.repo;
+      stackMetadataRef.current.repo = stream.sessionInfo.repo;
     }
 
     const activitiesToSave = stream.activities.map(
@@ -107,10 +166,49 @@ export function SessionPage({
       tone: stackMetadataRef.current.tone,
       repo: stackMetadataRef.current.repo,
       startedAt: stackMetadataRef.current.startedAt,
+      stackStatus: 'streaming',
       activities: activitiesToSave,
     };
-    savePrintStack(updatedStack).catch((err) => console.error('Failed to save stack', err));
-  }, [currentStackId, stream.activities, stream.sessionInfo, sessionId]);
+
+    // Debounce: clear previous timer, set new 500ms timer
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      flushSave(updatedStack);
+    }, 500);
+  }, [currentStackId, stream.activities, stream.sessionInfo, sessionId, flushSave]);
+
+  // Mark stack complete when session finishes
+  useEffect(() => {
+    if (stream.sessionState !== 'complete' || !currentStackId || !stackMetadataRef.current) return;
+
+    // Cancel any pending debounced save
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+
+    // Update repo if we have it now
+    if (stream.sessionInfo?.repo && !stackMetadataRef.current.repo) {
+      stackMetadataRef.current.repo = stream.sessionInfo.repo;
+    }
+
+    const activitiesToSave = stream.activities.map(
+      ({ imageUrl, ...rest }) => rest,
+    );
+    const finalStack: PrintStack = {
+      id: currentStackId,
+      sessionId: stream.sessionInfo?.sessionId || sessionId,
+      tone: stackMetadataRef.current.tone,
+      repo: stackMetadataRef.current.repo,
+      startedAt: stackMetadataRef.current.startedAt,
+      stackStatus: 'complete',
+      activities: activitiesToSave,
+    };
+    flushSave(finalStack);
+
+    // Store as loadedStack for regeneration reference
+    setLoadedStack(finalStack);
+  }, [stream.sessionState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePlay = useCallback(() => {
     if (stream.sessionState === 'paused') {
@@ -133,6 +231,7 @@ export function SessionPage({
         tone: selectedTone,
         repo: repo,
         startedAt: startedAt,
+        stackStatus: 'streaming',
         activities: [],
       };
       savePrintStack(newStack).catch((err) => console.error('Failed to save initial stack', err));
@@ -147,10 +246,63 @@ export function SessionPage({
   }, [stream]);
 
   const handleStop = useCallback(() => {
+    // Finalize current stack before clearing
+    if (currentStackId && stackMetadataRef.current) {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      if (stream.sessionInfo?.repo && !stackMetadataRef.current.repo) {
+        stackMetadataRef.current.repo = stream.sessionInfo.repo;
+      }
+      const activitiesToSave = stream.activities.map(
+        ({ imageUrl, ...rest }) => rest,
+      );
+      const finalStack: PrintStack = {
+        id: currentStackId,
+        sessionId: stream.sessionInfo?.sessionId || sessionId,
+        tone: stackMetadataRef.current.tone,
+        repo: stackMetadataRef.current.repo,
+        startedAt: stackMetadataRef.current.startedAt,
+        stackStatus: 'complete',
+        activities: activitiesToSave,
+      };
+      flushSave(finalStack);
+    }
+
     setCurrentStackId(null);
     stream.stop();
     setActiveLabelIndex(0);
-  }, [stream]);
+  }, [stream, currentStackId, sessionId, flushSave]);
+
+  const handleRegenerate = useCallback(() => {
+    if (!loadedStack) return;
+
+    const newStackId = crypto.randomUUID();
+    const startedAt = new Date().toISOString();
+
+    stackMetadataRef.current = {
+      startedAt,
+      tone: selectedTone,
+      model: selectedModel,
+      repo: loadedStack.repo,
+    };
+
+    const newStack: PrintStack = {
+      id: newStackId,
+      sessionId: loadedStack.sessionId,
+      tone: selectedTone,
+      repo: loadedStack.repo,
+      startedAt,
+      stackStatus: 'streaming',
+      parentStackId: loadedStack.id,
+      activities: [],
+    };
+    savePrintStack(newStack).catch((err) => console.error('Failed to save regen stack', err));
+    setCurrentStackId(newStackId);
+
+    stream.regenerate(loadedStack, selectedTone.toLowerCase(), selectedModel);
+  }, [loadedStack, selectedTone, selectedModel, stream]);
 
   const handleAddTone = useCallback(() => {
     setRightPanelMode((prev) =>
@@ -181,6 +333,40 @@ export function SessionPage({
     setPrinterDropdownOpen(false);
   }, []);
 
+  const handleFileClick = useCallback((filePath: string) => {
+    const activity = stream.activities[activeLabelIndex];
+    if (!activity) return;
+
+    if (activity.unidiffPatch) {
+      // Diff already available — switch immediately
+      setDiffFilePath(filePath);
+      setRightPanelMode('diff');
+      return;
+    }
+
+    // Fetch diff on-demand from Jules API
+    const sid = stream.sessionInfo?.sessionId || sessionId;
+    if (!sid) return;
+
+    setFetchingDiff(true);
+    fetch(`/api/session/${encodeURIComponent(sid)}/diff?activityId=${encodeURIComponent(activity.activityId)}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.unidiffPatch) {
+          stream.patchActivity(activity.activityId, { unidiffPatch: data.unidiffPatch });
+          setDiffFilePath(filePath);
+          setRightPanelMode('diff');
+        }
+      })
+      .catch(() => {})
+      .finally(() => setFetchingDiff(false));
+  }, [stream, activeLabelIndex, sessionId]);
+
+  const handleDiffBack = useCallback(() => {
+    setRightPanelMode('reading');
+    setDiffFilePath(null);
+  }, []);
+
   const handleScanPrinters = useCallback(() => {
     printerHook.scan();
   }, [printerHook]);
@@ -198,6 +384,13 @@ export function SessionPage({
   const allTones = initialTone && !baseTones.includes(initialTone)
     ? [...baseTones, initialTone]
     : baseTones;
+
+  // Show regenerate button when tone differs from loaded stack and session is complete
+  const showRegenerate = !!(
+    loadedStack &&
+    selectedTone !== loadedStack.tone &&
+    stream.sessionState === 'complete'
+  );
 
   // Format time from createTime or use index
   const formatTime = (activity: typeof stream.activities[0]) => {
@@ -226,6 +419,27 @@ export function SessionPage({
     };
     return map[activityType] || activityType.toUpperCase();
   };
+
+  if (isLoadingStack) {
+    return (
+      <>
+        <TopBar
+          sessionId={sessionId || undefined}
+          sessionTitle={sessionTitle || (sessionId ? sessionId : undefined)}
+          sessionRepo={sessionRepo}
+          sessionState="idle"
+          onPlay={() => {}}
+          onPause={() => {}}
+          onStop={() => {}}
+          onSessionClose={() => { window.location.href = '/'; }}
+          onSettings={() => { window.location.href = '/settings'; }}
+        />
+        <div className="flex flex-1 items-center justify-center text-[#72728a] text-sm">
+          Loading session...
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -305,7 +519,25 @@ export function SessionPage({
 
         {/* Right panel: reading pane or tone creator */}
         <aside className="w-[45%] bg-sidebar-bg flex flex-col relative h-full">
-          {rightPanelMode === 'reading' ? (
+          {rightPanelMode === 'diff' && diffFilePath && activeActivity?.unidiffPatch ? (
+            <DiffView
+              filePath={diffFilePath}
+              unidiffPatch={activeActivity.unidiffPatch}
+              onBack={handleDiffBack}
+            />
+          ) : rightPanelMode === 'diff' && fetchingDiff ? (
+            <div className="flex-1 flex items-center justify-center text-[#72728a] text-sm">
+              Loading diff...
+            </div>
+          ) : rightPanelMode === 'creating' ? (
+            <ToneCreator
+              savedTones={savedTones}
+              onSave={handleSaveTone}
+              onDeleteTone={handleDeleteTone}
+              onSelectTone={handleSelectSavedTone}
+              onClose={() => setRightPanelMode('reading')}
+            />
+          ) : (
             <ReadingPane
               toneName={activeActivity?.tone || selectedTone}
               modelName={MODELS.find(m => m.id === (activeActivity?.model || selectedModel))?.name}
@@ -323,14 +555,11 @@ export function SessionPage({
                   deletions: f.deletions,
                 })) ?? []
               }
-            />
-          ) : (
-            <ToneCreator
-              savedTones={savedTones}
-              onSave={handleSaveTone}
-              onDeleteTone={handleDeleteTone}
-              onSelectTone={handleSelectSavedTone}
-              onClose={() => setRightPanelMode('reading')}
+              status={activeActivity?.status}
+              codeReview={activeActivity?.codeReview}
+              onFileClick={activeActivity?.files.length ? handleFileClick : undefined}
+              onRegenerate={showRegenerate ? handleRegenerate : undefined}
+              unidiffPatch={activeActivity?.unidiffPatch}
             />
           )}
         </aside>

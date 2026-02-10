@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import type { SessionState } from '../components/TopBar';
+import type { PrintStack } from '../lib/print-stack';
 
 export interface SessionInfo {
   sessionId: string;
@@ -19,17 +20,24 @@ export interface ProcessedActivity {
   imageUrl?: string;
   tone?: string;
   model?: string;
+  status?: string;
+  codeReview?: string;
+  unidiffPatch?: string;
 }
 
 export interface UseSessionStreamReturn {
   sessionInfo: SessionInfo | null;
   activities: ProcessedActivity[];
   sessionState: SessionState;
-  play: (sessionId: string, tone?: string) => void;
+  play: (sessionId: string, tone?: string, model?: string) => void;
   pause: () => void;
   resume: () => void;
   stop: () => void;
   setTone: (tone: string) => void;
+  setModel: (model: string) => void;
+  patchActivity: (activityId: string, patch: Partial<ProcessedActivity>) => void;
+  loadFromStack: (stack: PrintStack) => void;
+  regenerate: (sourceStack: PrintStack, tone: string, model: string) => void;
   error: string | null;
 }
 
@@ -86,6 +94,9 @@ export function useSessionStream(): UseSessionStreamReturn {
         createTime: data.createTime,
         tone: toneRef.current,
         model: modelRef.current,
+        status: data.status,
+        codeReview: data.codeReview,
+        unidiffPatch: data.unidiffPatch,
       };
       setActivities((prev) => [...prev, activity]);
 
@@ -192,5 +203,55 @@ export function useSessionStream(): UseSessionStreamReturn {
     modelRef.current = model;
   }, []);
 
-  return { sessionInfo, activities, sessionState, play, pause, resume, stop, setTone, setModel, error };
+  const patchActivity = useCallback((activityId: string, patch: Partial<ProcessedActivity>) => {
+    setActivities(prev => prev.map(a =>
+      a.activityId === activityId ? { ...a, ...patch } : a
+    ));
+  }, []);
+
+  const loadFromStack = useCallback((stack: PrintStack) => {
+    const hydrated = stack.activities.map(a => ({ ...a, imageUrl: undefined }));
+    setActivities(hydrated);
+    setSessionInfo({ sessionId: stack.sessionId, repo: stack.repo, title: '', state: 'completed' });
+    setSessionState('complete');
+  }, []);
+
+  const regenerate = useCallback((sourceStack: PrintStack, tone: string, model: string) => {
+    // Hydrate activities from source — immutable data preserved, tone/model updated
+    setActivities(sourceStack.activities.map(a => ({ ...a, tone, model, imageUrl: undefined })));
+    setSessionState('streaming');
+
+    // Open SSE to regeneration endpoint
+    const params = new URLSearchParams({ tone, model });
+    const es = new EventSource(`/api/print-stack/${sourceStack.id}/regenerate?${params}`);
+    eventSourceRef.current = es;
+
+    es.addEventListener('activity:regenerated', (e) => {
+      const data = JSON.parse(e.data);
+      setActivities(prev => prev.map(a =>
+        a.index === data.index ? { ...a, summary: data.summary } : a
+      ));
+    });
+
+    es.addEventListener('regeneration:complete', () => {
+      setSessionState('complete');
+      closeEventSource();
+    });
+
+    es.addEventListener('regeneration:error', (e) => {
+      setError(JSON.parse(e.data).error);
+      setSessionState('failed');
+      closeEventSource();
+    });
+
+    es.onerror = () => {
+      if (es.readyState === EventSource.CLOSED) {
+        setSessionState('failed');
+        setError('Regeneration connection lost');
+        closeEventSource();
+      }
+    };
+  }, [closeEventSource]);
+
+  return { sessionInfo, activities, sessionState, play, pause, resume, stop, setTone, setModel, patchActivity, loadFromStack, regenerate, error };
 }
