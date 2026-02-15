@@ -12,9 +12,10 @@ import { LabelCardSkeleton } from '../LabelCardSkeleton';
 import { ModelSelector, MODELS } from '../ModelSelector';
 import { ReadingPane } from '../ReadingPane';
 import { AnalysisPane } from '../AnalysisPane';
-import type { KeyFile } from '../AnalysisPane';
 import { FileAnalysisView } from '../FileAnalysisView';
 import type { FileAnalysisData } from '../FileAnalysisView';
+import { IntentDetailView } from '../IntentDetailView';
+import type { IntentDetailData, IntentActivity } from '../IntentDetailView';
 import { DiffView } from '../DiffView';
 import { StatusBar } from '../StatusBar';
 import { PrinterDropdown } from '../PrinterDropdown';
@@ -28,7 +29,17 @@ import {
   versionKey,
 } from '../../lib/print-stack';
 import { EXPERT_PERSONAS } from '../../lib/personas';
+import { parseCodeReview, aggregateReviews } from '../../lib/parse-code-review';
+import type { SessionAnalysisResponse, InterpretiveAnalysis, CodeRefMap } from '../../lib/session-analysis';
 import type { FileTreeNode } from '../FileTree';
+
+/** Returns true only when codeRefs has at least one entry with a valid startLine. */
+function hasValidCodeRefs(codeRefs?: CodeRefMap): boolean {
+  if (!codeRefs) return false;
+  return Object.values(codeRefs).some(
+    refs => refs?.some(r => typeof r.startLine === 'number'),
+  );
+}
 
 const RIGHT_PANEL_TABS: Tab[] = [
   { id: 'narration', label: 'Activity' },
@@ -37,33 +48,28 @@ const RIGHT_PANEL_TABS: Tab[] = [
   { id: 'memory', label: 'Memory' },
 ];
 
-/** Convert a flat file list into a nested FileTreeNode[] structure. */
-function buildFileTree(
-  files: { path: string; additions: number; deletions: number }[],
-): FileTreeNode[] {
+function buildFileTree(fileMap: Map<string, { additions: number; deletions: number }>): FileTreeNode[] {
   const root: FileTreeNode[] = [];
-  for (const file of files) {
-    const parts = file.path.split('/');
-    let level = root;
-    for (let i = 0; i < parts.length; i++) {
-      const name = parts[i];
-      if (i === parts.length - 1) {
-        level.push({
-          name,
-          type: 'file',
-          status: 'M',
-          additions: file.additions,
-          deletions: file.deletions,
-        });
-      } else {
-        let dir = level.find(n => n.name === name && n.type === 'directory');
-        if (!dir) {
-          dir = { name, type: 'directory', children: [] };
-          level.push(dir);
-        }
-        level = dir.children!;
+  for (const [filePath, stats] of fileMap) {
+    const parts = filePath.split('/');
+    let current = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const dirName = parts[i];
+      let dir = current.find(n => n.name === dirName && n.type === 'directory');
+      if (!dir) {
+        dir = { name: dirName, type: 'directory', children: [] };
+        current.push(dir);
       }
+      current = dir.children!;
     }
+    const fileName = parts[parts.length - 1];
+    current.push({
+      name: fileName,
+      type: 'file',
+      status: 'M',
+      additions: stats.additions,
+      deletions: stats.deletions,
+    });
   }
   return root;
 }
@@ -101,6 +107,11 @@ export function SessionPage({
   const [analysisFilePath, setAnalysisFilePath] = useState<string | null>(null);
   const [isLoadingStack, setIsLoadingStack] = useState(!!sessionId);
   const [loadedStack, setLoadedStack] = useState<PrintStack | null>(null);
+  const [sessionAnalysis, setSessionAnalysis] = useState<SessionAnalysisResponse | null>(null);
+  const [analysisGenerating, setAnalysisGenerating] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [selectedIntentIndex, setSelectedIntentIndex] = useState<number | null>(null);
+  const [interpretiveVersions, setInterpretiveVersions] = useState<Record<string, InterpretiveAnalysis>>({});
 
   const stackMetadataRef = useRef<{ startedAt: string; tone: string; model: string; repo: string } | null>(null);
   const skipAutoSelectRef = useRef(false);
@@ -150,13 +161,46 @@ export function SessionPage({
     findLatestStack(sessionId).then(stack => {
       if (cancelled) return;
       if (stack && stack.activities.length > 0) {
-        skipAutoSelectRef.current = true;
-        stream.loadFromStack(stack, sessionStatus);
-        setSelectedTone(stack.tone);
+        // Snapshot stacks have raw activity types as summaries — detect explicitly or by heuristic
+        const rawCount = stack.activities.filter(a => a.summary === a.activityType).length;
+        const isSnapshot = stack.stackType === 'snapshot'
+          || rawCount > stack.activities.length / 2;
+
+        // Snapshot stacks have raw activities (summary = activityType) — skip timeline
+        if (!isSnapshot) {
+          skipAutoSelectRef.current = true;
+          stream.loadFromStack(stack, sessionStatus);
+          setSelectedTone(stack.tone);
+          // Sync model to first activity so ReadingPane matches the label
+          const firstModel = stack.activities[0]?.model;
+          if (firstModel) setSelectedModel(firstModel);
+        }
+
+        // Always keep loadedStack so analysis can reference the stack ID
         setLoadedStack(stack);
-        // Sync model to first activity so ReadingPane matches the label
-        const firstModel = stack.activities[0]?.model;
-        if (firstModel) setSelectedModel(firstModel);
+
+        // Hydrate cached session analysis if available for current tone/model
+        // Only use cache if it has valid codeRefs (non-empty, with startLine)
+        if (hasValidCodeRefs(stack.analysis?.structural?.codeRefs)) {
+          const cachedTone = stack.tone || initialTone || 'React Perf Expert';
+          const firstModel = stack.activities[0]?.model;
+          const cachedModel = firstModel || initialModel || 'gemini-2.5-flash-lite';
+          const vKey = versionKey(cachedTone, cachedModel);
+          const cachedInterp = stack.analysis!.interpretive?.[vKey];
+          if (hasValidCodeRefs(cachedInterp?.codeRefs)) {
+            setSessionAnalysis({ structural: stack.analysis!.structural!, interpretive: cachedInterp! });
+          }
+          // Load all interpretive versions that have valid codeRefs
+          if (stack.analysis!.interpretive) {
+            const validVersions: Record<string, InterpretiveAnalysis> = {};
+            for (const [key, interp] of Object.entries(stack.analysis!.interpretive)) {
+              if (hasValidCodeRefs(interp.codeRefs)) validVersions[key] = interp;
+            }
+            if (Object.keys(validVersions).length > 0) {
+              setInterpretiveVersions(validVersions);
+            }
+          }
+        }
       }
       setIsLoadingStack(false);
     });
@@ -294,7 +338,9 @@ export function SessionPage({
     targets: typeof stream.activities,
     tone: string,
     model: string,
+    options?: { showSkeletons?: boolean },
   ) => {
+    const { showSkeletons = true } = options || {};
     const targetKey = versionKey(tone, model);
     const normalizedTone = tone.toLowerCase();
 
@@ -305,8 +351,10 @@ export function SessionPage({
     const uncached = targets.filter(a => !a.versions?.[targetKey]);
     if (uncached.length === 0) return;
 
-    // Show skeletons for uncached activities
-    setRegeneratingIds(new Set(uncached.map(a => a.activityId)));
+    // Show skeletons for uncached activities (only in card/timeline view)
+    if (showSkeletons) {
+      setRegeneratingIds(new Set(uncached.map(a => a.activityId)));
+    }
 
     // Regenerate in parallel, collect results
     const results = new Map<string, string>();
@@ -330,11 +378,13 @@ export function SessionPage({
       } catch (err) {
         console.error('Failed to regenerate activity:', err);
       } finally {
-        setRegeneratingIds(prev => {
-          const next = new Set(prev);
-          next.delete(activity.activityId);
-          return next;
-        });
+        if (showSkeletons) {
+          setRegeneratingIds(prev => {
+            const next = new Set(prev);
+            next.delete(activity.activityId);
+            return next;
+          });
+        }
       }
     }));
 
@@ -375,9 +425,11 @@ export function SessionPage({
       return;
     }
 
-    // Switch existing activities to cached versions for the current permutation
-    if (stream.activities.length > 0) {
-      stream.switchAllVersions(selectedTone, selectedModel);
+    // Complete session with existing activities: regenerate analysis only.
+    // Generating analysis and printing labels are independent steps.
+    if (stream.sessionState === 'complete' && stream.activities.length > 0) {
+      regenerateActivities(stream.activities, selectedTone, selectedModel);
+      return;
     }
 
     const newStackId = crypto.randomUUID();
@@ -412,7 +464,7 @@ export function SessionPage({
         ? { afterIndex: lastIndex, preserveVersionsFrom: stream.activities }
         : undefined,
     );
-  }, [sessionId, selectedTone, selectedModel, stream]);
+  }, [sessionId, selectedTone, selectedModel, stream, regenerateActivities]);
 
   const handleRestart = useCallback(() => {
     // Snapshot current summaries to detect when activities are replaced
@@ -491,6 +543,92 @@ export function SessionPage({
     if (!activity) return;
     await regenerateActivities([activity], selectedTone, selectedModel);
   }, [activeActivity, selectedTone, selectedModel, regenerateActivities]);
+
+  const handleAnalysisRegenerate = useCallback(async () => {
+    if (stream.activities.length === 0 && !loadedStack?.activities.length) return;
+    const stackId = currentStackId || loadedStack?.id;
+    if (!stackId) return;
+    setAnalysisGenerating(true);
+    setAnalysisError(null);
+    try {
+      const res = await fetch('/api/session-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          stackId,
+          sessionPrompt,
+          tone: selectedTone,
+          model: selectedModel,
+          // Only reuse structural if it has valid codeRefs; otherwise force Phase 1 to re-run
+          structuralAnalysis: hasValidCodeRefs(sessionAnalysis?.structural?.codeRefs)
+            ? sessionAnalysis!.structural
+            : undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Analysis failed' }));
+        throw new Error(err.error || 'Analysis failed');
+      }
+      const data: SessionAnalysisResponse = await res.json();
+      setSessionAnalysis(data);
+      const vKey = versionKey(selectedTone, selectedModel);
+      setInterpretiveVersions(prev => ({ ...prev, [vKey]: data.interpretive }));
+    } catch (err: any) {
+      setAnalysisError(err.message);
+      console.error('Analysis regeneration failed:', err);
+    } finally {
+      setAnalysisGenerating(false);
+    }
+  }, [stream.activities, sessionId, sessionPrompt, selectedTone, selectedModel, currentStackId, loadedStack, sessionAnalysis]);
+
+  // Generate Analysis — calls the two-phase LLM analysis endpoint (independent of Play/labels)
+  const handleGenerateAnalysis = useCallback(async () => {
+    let stackId = currentStackId || loadedStack?.id;
+    setAnalysisGenerating(true);
+    setAnalysisError(null);
+    try {
+      // No stack yet — create one via snapshot (loads raw activities, NO label generation)
+      if (!stackId) {
+        const snapRes = await fetch(`/api/session/${encodeURIComponent(sessionId)}/snapshot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tone: selectedTone }),
+        });
+        if (!snapRes.ok) {
+          const err = await snapRes.json().catch(() => ({ error: 'Snapshot failed' }));
+          throw new Error(err.error || 'Failed to load session data');
+        }
+        const snapData = await snapRes.json();
+        stackId = snapData.stackId;
+      }
+
+      const res = await fetch('/api/session-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          stackId,
+          sessionPrompt,
+          tone: selectedTone,
+          model: selectedModel,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Analysis failed' }));
+        throw new Error(err.error || 'Analysis failed');
+      }
+      const data: SessionAnalysisResponse = await res.json();
+      setSessionAnalysis(data);
+      const vKey = versionKey(selectedTone, selectedModel);
+      setInterpretiveVersions(prev => ({ ...prev, [vKey]: data.interpretive }));
+    } catch (err: any) {
+      setAnalysisError(err.message);
+      console.error('Analysis generation failed:', err);
+    } finally {
+      setAnalysisGenerating(false);
+    }
+  }, [sessionId, sessionPrompt, selectedTone, selectedModel, currentStackId, loadedStack]);
 
   const handleVersionSelect = useCallback((tone: string, model: string) => {
     if (!activeActivity) return;
@@ -598,28 +736,176 @@ export function SessionPage({
     const totalAdditions = entries.reduce((s, [, f]) => s + f.additions, 0);
     const totalDeletions = entries.reduce((s, [, f]) => s + f.deletions, 0);
 
-    const keyFiles: KeyFile[] = entries
+    // Narrative: last activity's rolling summary (already incorporates all activities)
+    // Prepend "This session " when the summary starts with a past-tense verb
+    // so it reads as prose rather than a commit message.
+    const lastActivity = stream.activities[stream.activities.length - 1];
+    let narrative = lastActivity?.summary || undefined;
+    if (narrative && /^[A-Z][a-z]+ed\b/.test(narrative)) {
+      narrative = 'This session ' + narrative.charAt(0).toLowerCase() + narrative.slice(1);
+    }
+
+    // Duration: first to last activity createTime
+    let duration: string | undefined;
+    if (stream.activities.length >= 2) {
+      const first = stream.activities[0].createTime;
+      const last = stream.activities[stream.activities.length - 1].createTime;
+      if (first && last) {
+        const diffMs = new Date(last).getTime() - new Date(first).getTime();
+        const diffMin = Math.round(diffMs / 60000);
+        duration = diffMin > 0 ? `~${diffMin} min` : '<1 min';
+      }
+    }
+
+    // Parse and aggregate code reviews into structured sections
+    const reviews = stream.activities
+      .filter(a => a.codeReview)
+      .map(a => parseCodeReview(a.codeReview!));
+    const aggregated = aggregateReviews(reviews);
+
+    // Key files — top 5 by churn, with descriptions from commit messages
+    const fileDescriptions = new Map<string, string>();
+    for (const a of stream.activities) {
+      for (const f of a.files) {
+        if (!fileDescriptions.has(f.path) && a.commitMessage) {
+          fileDescriptions.set(f.path, a.commitMessage.split('\n')[0].slice(0, 80));
+        }
+      }
+    }
+    const keyFiles = entries
       .sort((a, b) => (b[1].additions + b[1].deletions) - (a[1].additions + a[1].deletions))
-      .slice(0, 4)
+      .slice(0, 5)
       .map(([path, stats]) => ({
         path,
         additions: stats.additions,
         deletions: stats.deletions,
-        description: `${stats.additions + stats.deletions} lines changed`,
+        description: fileDescriptions.get(path) || '',
       }));
 
-    const fileTree: FileTreeNode[] = buildFileTree(
-      entries.map(([path, stats]) => ({ path, ...stats })),
-    );
+    // File tree for the collapsible "All Files" section
+    const fileTree = buildFileTree(fileMap);
+
+    // The actual tone/model the analysis data reflects (from activities, not the selector)
+    const activeTone = lastActivity?.tone || '';
+    const activeModel = lastActivity?.model || '';
+    const activePersonaName = EXPERT_PERSONAS.find(
+      p => p.name.toLowerCase() === activeTone.toLowerCase(),
+    )?.name || activeTone || selectedTone;
+    const activeModelName = MODELS.find(m => m.id === activeModel)?.name
+      || MODELS.find(m => m.id === selectedModel)?.name;
+
+    // When LLM analysis exists, use it for narrative/risks/highlights/nextSteps
+    const hasLLMAnalysis = !!sessionAnalysis;
+    const llmNarrative = sessionAnalysis?.interpretive.narrative;
+    const llmRisks = sessionAnalysis?.interpretive.riskAssessments || [];
+    const llmInsights = sessionAnalysis?.interpretive.keyInsights || [];
+    const llmNextSteps = sessionAnalysis?.interpretive.nextSteps || [];
+    const llmVerdict = sessionAnalysis?.interpretive.verdict;
+    const llmIntents = sessionAnalysis?.structural.intents || [];
+    const llmIntentDescriptions = sessionAnalysis?.interpretive.intentDescriptions || [];
+    const llmAgentTrace = sessionAnalysis?.structural.agentTrace;
+    const llmPatterns = sessionAnalysis?.structural.factualFindings.patterns || [];
 
     return {
       totalFiles: fileMap.size,
       totalAdditions,
       totalDeletions,
+      totalActivities: stream.activities.length,
+      duration,
+      narrative: hasLLMAnalysis ? llmNarrative : narrative,
+      patterns: hasLLMAnalysis ? llmPatterns : aggregated.patterns,
+      highlights: hasLLMAnalysis ? llmInsights : aggregated.highlights,
+      risks: hasLLMAnalysis ? llmRisks : aggregated.risks,
+      nextSteps: hasLLMAnalysis ? llmNextSteps : aggregated.nextSteps,
       keyFiles,
       fileTree,
+      toneName: activePersonaName,
+      modelName: activeModelName,
+      sessionGoal: sessionPrompt,
+      intents: llmIntents,
+      intentDescriptions: llmIntentDescriptions,
+      agentTrace: llmAgentTrace,
+      verdict: llmVerdict,
     };
+  }, [stream.activities, selectedTone, selectedModel, sessionAnalysis, sessionPrompt]);
+
+  // Build file→patch map for expandable code snippets in analysis
+  // Use stream activities when available, fall back to loadedStack (snapshot stacks)
+  const fileDiffMap = useMemo(() => {
+    const map = new Map<string, string>();
+    const activities = stream.activities.length > 0
+      ? stream.activities
+      : loadedStack?.activities ?? [];
+    for (const a of activities) {
+      if (!a.unidiffPatch) continue;
+      if (a.files.length > 0) {
+        // Map from file metadata
+        for (const f of a.files) {
+          if (!map.has(f.path)) map.set(f.path, a.unidiffPatch);
+        }
+      } else {
+        // Snapshot activities may have patches but empty files — extract paths from diff headers
+        const fileMatches = a.unidiffPatch.matchAll(/^diff --git a\/(.+?) b\//gm);
+        for (const m of fileMatches) {
+          if (!map.has(m[1])) map.set(m[1], a.unidiffPatch);
+        }
+      }
+    }
+    return map;
+  }, [stream.activities, loadedStack]);
+
+  // Merge codeRefs from both structural and interpretive analysis
+  const mergedCodeRefs = useMemo(() => {
+    if (!sessionAnalysis) return undefined;
+    return {
+      ...sessionAnalysis.structural.codeRefs,
+      ...sessionAnalysis.interpretive.codeRefs,
+    };
+  }, [sessionAnalysis]);
+
+  // Session-level versions: permutations where ALL activities have cached data
+  const analysisVersions = useMemo(() => {
+    if (stream.activities.length === 0) return {};
+    const allKeys = new Set<string>();
+    for (const a of stream.activities) {
+      if (a.versions) {
+        for (const key of Object.keys(a.versions)) {
+          allKeys.add(key);
+        }
+      }
+    }
+    const result: Record<string, { tone: string; model: string }> = {};
+    for (const key of allKeys) {
+      if (stream.activities.every(a => a.versions?.[key])) {
+        const v = stream.activities[0].versions![key];
+        result[key] = { tone: v.tone, model: v.model };
+      }
+    }
+    return result;
   }, [stream.activities]);
+
+  // Session analysis versions: interpretive permutations cached on the stack
+  const sessionAnalysisVersions = useMemo(() => {
+    const result: Record<string, { tone: string; model: string }> = {};
+    for (const [key, interp] of Object.entries(interpretiveVersions)) {
+      result[key] = { tone: interp.tone, model: interp.model };
+    }
+    return result;
+  }, [interpretiveVersions]);
+
+  const handleAnalysisVersionSelect = useCallback((tone: string, model: string) => {
+    // For the Analysis tab: switch the session analysis to the cached interpretive version
+    const vKey = versionKey(tone, model);
+    const interp = interpretiveVersions[vKey];
+    if (interp && sessionAnalysis) {
+      setSessionAnalysis({ structural: sessionAnalysis.structural, interpretive: interp });
+    }
+    // Also switch per-activity labels so the Activity tab stays in sync
+    stream.switchAllVersions(tone, model);
+    const persona = EXPERT_PERSONAS.find(p => p.name.toLowerCase() === tone.toLowerCase());
+    setSelectedTone(persona?.name || tone);
+    setSelectedModel(model);
+  }, [stream, interpretiveVersions, sessionAnalysis]);
 
   // --- File analysis drill-in data ---
   const fileAnalysisData = useMemo<FileAnalysisData | null>(() => {
@@ -655,6 +941,61 @@ export function SessionPage({
 
   const handleAnalysisDrillBack = useCallback(() => {
     setAnalysisFilePath(null);
+    setSelectedIntentIndex(null);
+  }, []);
+
+  // Derive IntentDetailData when an intent is selected
+  const intentDetailData = useMemo<IntentDetailData | null>(() => {
+    if (selectedIntentIndex === null || !sessionAnalysis) return null;
+    const intent = sessionAnalysis.structural.intents[selectedIntentIndex];
+    if (!intent) return null;
+    const desc = sessionAnalysis.interpretive.intentDescriptions.find(
+      d => d.intentIndex === selectedIntentIndex,
+    );
+    // Collect file stats from activities referenced by this intent
+    const fileStatsMap = new Map<string, { path: string; additions: number; deletions: number }>();
+    for (const filePath of intent.files) {
+      for (const a of stream.activities) {
+        const f = a.files.find(f => f.path === filePath);
+        if (f) {
+          const existing = fileStatsMap.get(filePath);
+          if (existing) {
+            existing.additions += f.additions;
+            existing.deletions += f.deletions;
+          } else {
+            fileStatsMap.set(filePath, { path: f.path, additions: f.additions, deletions: f.deletions });
+          }
+        }
+      }
+    }
+    // Build meaningful activity details from the referenced indices
+    const activities: IntentActivity[] = intent.activityIndices
+      .map(idx => {
+        const a = stream.activities[idx];
+        if (!a) return null;
+        return {
+          index: idx,
+          commitMessage: a.commitMessage,
+          summary: a.summary,
+          activityType: a.activityType,
+          createTime: a.createTime,
+        };
+      })
+      .filter((a): a is IntentActivity => a !== null);
+
+    return {
+      title: desc?.title || intent.title,
+      description: desc?.description || '',
+      whatChanged: intent.whatChanged,
+      whyItChanged: intent.whyItChanged,
+      files: Array.from(fileStatsMap.values()),
+      activityIndices: intent.activityIndices,
+      activities,
+    };
+  }, [selectedIntentIndex, sessionAnalysis, stream.activities]);
+
+  const handleIntentClick = useCallback((intentIndex: number) => {
+    setSelectedIntentIndex(intentIndex);
   }, []);
 
   // Format time from createTime or use index
@@ -832,7 +1173,13 @@ export function SessionPage({
                   onVersionSelect={handleVersionSelect}
                 />
               ) : activeTab === 'analysis' ? (
-                analysisFilePath && fileAnalysisData ? (
+                selectedIntentIndex !== null && intentDetailData ? (
+                  <IntentDetailView
+                    data={intentDetailData}
+                    onBack={handleAnalysisDrillBack}
+                    onFileClick={handleAnalysisFileClick}
+                  />
+                ) : analysisFilePath && fileAnalysisData ? (
                   <FileAnalysisView
                     data={fileAnalysisData}
                     onBack={handleAnalysisDrillBack}
@@ -840,17 +1187,37 @@ export function SessionPage({
                   />
                 ) : (
                   <AnalysisPane
-                    summary={
-                      stream.activities.length > 0
-                        ? `Session analysis across ${stream.activities.length} activit${stream.activities.length === 1 ? 'y' : 'ies'} in ${stream.sessionInfo?.repo || sessionRepo || 'this repository'}.`
-                        : undefined
-                    }
+                    toneName={analysisData.toneName}
+                    modelName={analysisData.modelName}
+                    versions={sessionAnalysisVersions}
+                    versionCount={Object.keys(sessionAnalysisVersions).length}
+                    onVersionSelect={handleAnalysisVersionSelect}
+                    onRegenerate={sessionAnalysis ? handleAnalysisRegenerate : undefined}
+                    regenerateLabel={analysisGenerating ? 'Regenerating...' : 'Regenerate'}
                     totalFiles={analysisData.totalFiles}
                     totalAdditions={analysisData.totalAdditions}
                     totalDeletions={analysisData.totalDeletions}
-                    keyFiles={analysisData.keyFiles}
-                    fileTree={analysisData.fileTree}
+                    totalActivities={analysisData.totalActivities}
+                    duration={analysisData.duration}
                     onFileClick={handleAnalysisFileClick}
+                    onGenerate={!sessionAnalysis && !analysisGenerating ? handleGenerateAnalysis : undefined}
+                    generating={analysisGenerating}
+                    /* Content only renders after LLM analysis exists — no client-side aggregate fallback */
+                    narrative={sessionAnalysis ? analysisData.narrative : undefined}
+                    patterns={sessionAnalysis ? analysisData.patterns : []}
+                    highlights={sessionAnalysis ? analysisData.highlights : []}
+                    risks={sessionAnalysis ? analysisData.risks : []}
+                    nextSteps={sessionAnalysis ? analysisData.nextSteps : []}
+                    keyFiles={sessionAnalysis ? analysisData.keyFiles : []}
+                    fileTree={sessionAnalysis ? analysisData.fileTree : []}
+                    sessionGoal={sessionAnalysis ? analysisData.sessionGoal : undefined}
+                    intents={sessionAnalysis ? analysisData.intents : []}
+                    intentDescriptions={sessionAnalysis ? analysisData.intentDescriptions : []}
+                    agentTrace={sessionAnalysis ? analysisData.agentTrace : undefined}
+                    verdict={sessionAnalysis ? analysisData.verdict : undefined}
+                    onIntentClick={handleIntentClick}
+                    fileDiffs={sessionAnalysis ? fileDiffMap : undefined}
+                    codeRefs={mergedCodeRefs}
                   />
                 )
               ) : activeTab === 'recs' ? (

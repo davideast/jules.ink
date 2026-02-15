@@ -284,12 +284,13 @@ export function useSessionStream(): UseSessionStreamReturn {
     setActivities(hydrated);
     setSessionInfo({ sessionId: stack.sessionId, repo: stack.repo, title: '', state: sessionStatus || 'completed' });
 
-    // Loading from cache never means "fully streamed" — only the session:complete
-    // SSE event should set 'complete'. Cache loads are always 'ready' (Play) unless failed.
-    if (sessionStatus === 'failed') {
+    // Map the SSR session status to our internal state
+    if (sessionStatus === 'in_progress') {
+      setSessionState('ready');
+    } else if (sessionStatus === 'failed') {
       setSessionState('failed');
     } else {
-      setSessionState('ready');
+      setSessionState('complete');
     }
   }, []);
 

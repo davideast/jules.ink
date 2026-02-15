@@ -463,6 +463,9 @@ export class SessionSummarizer {
   private simplifyActivity(activity: Activity): Record<string, any> {
     const base = { type: activity.type, originator: activity.originator };
 
+    // Collect text from non-code artifacts (bash output, etc.)
+    const artifactText = this.extractArtifactText(activity.artifacts);
+
     // 1. Code Changes
     const changeSet = activity.artifacts?.find(a => a.type === 'changeSet');
     if (changeSet && changeSet.gitPatch) {
@@ -473,34 +476,59 @@ export class SessionSummarizer {
       };
     }
 
-    // 2. Planning - EXTRACT ACTUAL TEXT
+    // 2. Planning — serialize all plan steps so the LLM has real content
     if (activity.type === 'planGenerated') {
-      // Deep extraction to find meaningful text
-      const plan = (activity as any).planGenerated?.plan || (activity as any).plan;
-      const firstStep = plan?.steps?.[0]?.title;
-      const activityTitle = (activity as any).title;
-
-      // Priority: Activity Title -> First Step Title -> Generic fallback
-      const description = activityTitle || firstStep || 'Plan generated with no details.';
-
-      return { ...base, description };
+      const plan = (activity as any).plan;
+      let description = '';
+      if (plan?.steps?.length > 0) {
+        description = plan.steps
+          .map((s: any) => `${s.index != null ? s.index + 1 : '-'}. ${s.title}${s.description ? ': ' + s.description : ''}`)
+          .join('\n');
+      } else if (plan) {
+        // Unknown plan structure — serialize for the LLM
+        const raw = JSON.stringify(plan);
+        description = raw.length > 2000 ? raw.slice(0, 2000) + '...' : raw;
+      } else {
+        description = 'Plan generated (no step details available).';
+      }
+      return { ...base, description, ...(artifactText ? { artifacts: artifactText } : {}) };
     }
 
     if (activity.type === 'planApproved') {
-      return { ...base, description: 'User approved the plan.' };
+      const planId = (activity as any).planId;
+      return { ...base, description: `Plan approved${planId ? ` (plan: ${planId})` : ''}.`, ...(artifactText ? { artifacts: artifactText } : {}) };
     }
 
     // 3. Messages
     if (activity.type === 'agentMessaged' || activity.type === 'userMessaged') {
-      return { ...base, message: (activity as any).message };
+      return { ...base, message: (activity as any).message, ...(artifactText ? { artifacts: artifactText } : {}) };
     }
 
-    // 4. Progress
+    // 4. Progress — include both title and description
     if (activity.type === 'progressUpdated') {
-      return { ...base, description: (activity as any).title };
+      const title = (activity as any).title || '';
+      const desc = (activity as any).description || '';
+      return { ...base, title, description: desc, ...(artifactText ? { artifacts: artifactText } : {}) };
     }
 
-    return base;
+    return { ...base, ...(artifactText ? { artifacts: artifactText } : {}) };
+  }
+
+  /** Extract readable text from non-code artifacts (bash output, etc.) */
+  private extractArtifactText(artifacts: Activity['artifacts']): string | null {
+    if (!artifacts?.length) return null;
+    const parts: string[] = [];
+    for (const a of artifacts) {
+      if (a.type === 'bashOutput') {
+        const bash = a as any;
+        const cmd = bash.command ? `$ ${bash.command}` : '';
+        const out = bash.stdout || '';
+        const err = bash.stderr || '';
+        const text = [cmd, out, err].filter(Boolean).join('\n').slice(0, 1000);
+        if (text) parts.push(text);
+      }
+    }
+    return parts.length > 0 ? parts.join('\n---\n') : null;
   }
 
   private buildSmartContext(rawDiff: string) {

@@ -1,4 +1,7 @@
+import type { AnalysisCache } from './session-analysis';
+
 export type StackStatus = 'streaming' | 'complete';
+export type StackType = 'streaming' | 'snapshot';
 
 export interface ActivityVersion {
   summary: string;
@@ -35,8 +38,10 @@ export interface PrintStack {
   repo: string;
   startedAt: string;
   stackStatus?: StackStatus;
+  stackType?: StackType;
   parentStackId?: string;
   activities: PrintStackActivity[];
+  analysis?: AnalysisCache;
 }
 
 export async function findLatestStack(sessionId: string): Promise<PrintStack | null> {

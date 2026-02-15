@@ -1,4 +1,12 @@
 import type { APIRoute } from 'astro';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = process.env.JULES_INK_ROOT || path.resolve(__dirname, '../../../../');
+const CACHE_DIR = path.join(ROOT_DIR, '.jules');
+const SESSIONS_CACHE_FILE = path.join(CACHE_DIR, 'sessions-cache.json');
 
 export const GET: APIRoute = async ({ request }) => {
   const url = new URL(request.url);
@@ -29,6 +37,19 @@ export const GET: APIRoute = async ({ request }) => {
         updateTime: s.updateTime,
       };
     });
+
+    // Write-through to our own file cache so SSR can read it instantly
+    if (!pageToken) {
+      try {
+        await fs.mkdir(CACHE_DIR, { recursive: true });
+        await fs.writeFile(
+          SESSIONS_CACHE_FILE,
+          JSON.stringify({ sessions, updatedAt: new Date().toISOString() }),
+        );
+      } catch {
+        // Non-critical — SSR fallback will just use SDK cache
+      }
+    }
 
     return new Response(
       JSON.stringify({

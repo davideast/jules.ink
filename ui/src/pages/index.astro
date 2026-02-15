@@ -3,6 +3,13 @@ import AppLayout from '../layouts/AppLayout.astro';
 import { SessionListPage } from '../components/pages/SessionListPage';
 import { SetupPage } from '../components/pages/SetupPage';
 import { checkKeysConfigured } from '../lib/api-keys';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = process.env.JULES_INK_ROOT || path.resolve(__dirname, '../../../');
+const SESSIONS_CACHE_FILE = path.join(ROOT_DIR, '.jules', 'sessions-cache.json');
 
 const keysConfigured = await checkKeysConfigured();
 
@@ -11,40 +18,16 @@ let initialNextPageToken: string | null = null;
 let initialError: string | null = null;
 
 if (keysConfigured) {
+  // Read from our own file cache — written by /api/sessions on each background fetch.
+  // Pure local file read, no network, no SDK. Instant SSR.
   try {
-    const { connect } = await import('@google/jules-sdk');
-    const jules = connect();
-
-    // Cache-only: pure local read, no network. Instant SSR.
-    // The previous page load's jules.sessions() call populated the cache
-    // via write-through. The client will background-sync for fresh data.
-    const cached = await jules.select({
-      from: 'sessions' as const,
-      limit: 25,
-      order: 'desc' as const,
-    });
-
-    initialSessions = cached.map((s: any) => {
-      const rawState = String(s.state || '').toLowerCase();
-      let status: 'completed' | 'in_progress' | 'failed' = 'in_progress';
-      if (rawState === 'completed') status = 'completed';
-      else if (rawState === 'failed') status = 'failed';
-
-      const repo = s.sourceContext?.source?.replace('sources/github/', '') || '';
-
-      return {
-        id: s.id,
-        title: s.title || (s.prompt ? s.prompt.slice(0, 60) + '...' : `Session ${s.id.slice(0, 8)}`),
-        repo,
-        status,
-        createTime: s.createTime,
-        updateTime: s.updateTime,
-      };
-    });
-    // No pageToken from select() — pagination handled by background refresh
-  } catch (err: any) {
-    console.error('[SSR] Failed to load sessions:', err);
-    initialError = err.message || 'Failed to load sessions';
+    const raw = await fs.readFile(SESSIONS_CACHE_FILE, 'utf-8');
+    const cached = JSON.parse(raw);
+    if (cached.sessions?.length > 0) {
+      initialSessions = cached.sessions;
+    }
+  } catch {
+    // No cache yet (first-ever visit) — client will background-fetch and populate it.
   }
 }
 ---
