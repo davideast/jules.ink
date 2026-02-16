@@ -1,17 +1,13 @@
 import type { APIRoute } from 'astro';
 import { readEnv, writeEnv, checkKeysConfigured } from '../../lib/api-keys';
 
-/** GET — return key status and current values */
+/** GET — return key status */
 export const GET: APIRoute = async () => {
-  const env = await readEnv();
-  const geminiKey = env.get('GEMINI_API_KEY')?.trim() || '';
-  const julesKey = env.get('JULES_API_KEY')?.trim() || '';
-  const configured = Boolean(geminiKey) && Boolean(julesKey);
+  const configured = await checkKeysConfigured();
 
-  return new Response(
-    JSON.stringify({ configured, geminiKey, julesKey }),
-    { headers: { 'Content-Type': 'application/json' } },
-  );
+  return new Response(JSON.stringify({ configured }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
 };
 
 /** POST — save keys to .env and update process.env */
