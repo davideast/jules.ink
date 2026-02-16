@@ -1,4 +1,4 @@
-import { createCanvas, loadImage, GlobalFonts } from '@napi-rs/canvas';
+import { createCanvas, loadImage, GlobalFonts, CanvasRenderingContext2D } from '@napi-rs/canvas';
 import path from 'path';
 import fs from 'fs';
 import { calculateWrappedLines, TextSegment, truncateMiddle } from './utils.js';
@@ -86,9 +86,9 @@ export interface LabelData {
   files: FileStat[];
 }
 
-let templatePromise: Promise<any> | null = null;
+let templatePromise: Promise<Awaited<ReturnType<typeof loadImage>> | null> | null = null;
 
-async function getTemplate(): Promise<any> {
+async function getTemplate(): Promise<Awaited<ReturnType<typeof loadImage>> | null> {
   if (templatePromise) return templatePromise;
 
   templatePromise = (async () => {
@@ -142,7 +142,7 @@ export async function generateLabel(data: LabelData): Promise<Buffer> {
   return canvas.toBuffer('image/png');
 }
 
-function drawHeader(ctx: any, repo: string, sessionId: string) {
+function drawHeader(ctx: CanvasRenderingContext2D, repo: string, sessionId: string) {
   const { width, padding } = CONFIG;
   ctx.font = CONFIG.fonts.header;
   ctx.textAlign = 'right';
@@ -163,7 +163,7 @@ function drawHeader(ctx: any, repo: string, sessionId: string) {
   ctx.fillText(repo, padding, CONFIG.layout.headerY);
 }
 
-function drawBodyAnchored(ctx: any, text: string, fixedY: number, maxHeight: number) {
+function drawBodyAnchored(ctx: CanvasRenderingContext2D, text: string, fixedY: number, maxHeight: number) {
   const maxWidth = CONFIG.width - (CONFIG.padding * 2);
 
   // 1. Parse raw text into typed segments
@@ -259,7 +259,7 @@ function drawBodyAnchored(ctx: any, text: string, fixedY: number, maxHeight: num
   }
 }
 
-function drawStatsFixed(ctx: any, files: FileStat[], fixedY: number) {
+function drawStatsFixed(ctx: CanvasRenderingContext2D, files: FileStat[], fixedY: number) {
   ctx.font = CONFIG.fonts.stats;
   let currentY = fixedY;
 
