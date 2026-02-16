@@ -1,13 +1,19 @@
 import { GoogleGenAI } from '@google/genai';
 import { Ollama } from 'ollama';
 import { type Activity, type JulesClient } from '@google/jules-sdk';
-// @google/jules-mcp is imported dynamically to avoid hard dependency in CI/test environments
-type SessionStateResult = Awaited<ReturnType<typeof import('@google/jules-mcp')['getSessionState']>>;
-type ReviewChangesResult = Awaited<ReturnType<typeof import('@google/jules-mcp')['codeReview']>>;
+// Inline type for session state — @google/jules-mcp is not installed; dynamic import in
+// getCachedSessionState() fails gracefully at runtime (returns undefined).
+interface SessionStateResult {
+  prompt?: string;
+  status?: string;
+  lastAgentMessage?: { content: string };
+}
 import parseDiff from 'parse-diff';
 import micromatch from 'micromatch';
 import { encode } from 'gpt-tokenizer';
 import Bottleneck from 'bottleneck';
+import { type ExpertPersona, resolvePersona, resolvePersonaByName, formatRulesForPrompt } from './expert-personas.js';
+import { loadSkillRules } from './skill-loader.js';
 
 // --- Configuration Constants ---
 const CLOUD_MODEL_NAME = 'gemini-2.5-flash-lite';
@@ -25,24 +31,8 @@ const IGNORE_PATTERNS = [
   '**/*.d.ts'
 ];
 
-export type TonePreset = 'professional' | 'pirate' | 'shakespearean' | 'excited' | 'haiku' | 'noir';
-
-const TONE_MODIFIERS: Record<TonePreset, string> = {
-  professional: '',
-  pirate: 'Write in the style of a pirate. Use nautical terms and pirate slang like "arr", "matey", "ye", "be", etc.',
-  shakespearean: 'Write in Shakespearean English with dramatic flair. Use "doth", "hark", "forsooth", "verily", etc.',
-  excited: 'Write with EXTREME enthusiasm!!! Use exclamation marks and emojis like 🎉🚀✨💥!',
-  haiku: 'Format your response as a haiku (5-7-5 syllable structure). Be poetic and zen.',
-  noir: 'Write in the style of a 1940s noir detective narration. Dark, moody, metaphorical.',
-};
-
-/** Resolves a tone string to its modifier. Accepts preset names or custom instructions. */
-function resolveToneModifier(tone: string | undefined): string {
-  if (!tone || tone === 'professional') return '';
-  if (tone in TONE_MODIFIERS) return TONE_MODIFIERS[tone as TonePreset];
-  // Treat as custom tone instruction
-  return tone;
-}
+// Keep TonePreset as a type alias for backward compatibility
+export type TonePreset = string;
 
 interface ActivityLogEntry {
   index: number;
@@ -64,6 +54,8 @@ export interface SummarizerConfig {
   localModelName?: string;
   cloudModelName?: string;
   tone?: string;
+  personaId?: string;
+  skillsDir?: string;
   tier?: 'free' | 'tier1';
   sessionId?: string;
 }
@@ -71,7 +63,10 @@ export interface SummarizerConfig {
 export class SessionSummarizer {
   private backend: 'cloud' | 'local';
   private localModelName: string;
-  private toneModifier: string;
+  private persona: ExpertPersona | undefined;
+  private customToneModifier: string;
+  private skillsDir: string | undefined;
+  private skillContext: string | null = null; // null = not yet loaded
   private genAI: GoogleGenAI | null = null;
   private genModel: any | null = null;
   private ollama: Ollama | null = null;
@@ -84,8 +79,17 @@ export class SessionSummarizer {
   constructor(config: SummarizerConfig = {}) {
     this.backend = config.backend || 'local';
     this.localModelName = config.localModelName || LOCAL_MODEL_DEFAULT;
-    this.toneModifier = resolveToneModifier(config.tone);
+    this.skillsDir = config.skillsDir;
     this.sessionId = config.sessionId;
+
+    // Resolve persona: try personaId first, then match tone string to persona name, then fall back to custom tone
+    if (config.personaId) {
+      this.persona = resolvePersona(config.personaId);
+    } else if (config.tone) {
+      this.persona = resolvePersonaByName(config.tone);
+    }
+    // If no persona matched and a tone string was given, use it as a custom modifier
+    this.customToneModifier = this.persona ? '' : (config.tone || '');
 
     if (this.backend === 'cloud') {
       const key = config.apiKey || process.env.GEMINI_API_KEY;
@@ -101,6 +105,44 @@ export class SessionSummarizer {
       this.ollama = new Ollama();
       this.limiter = new Bottleneck({ maxConcurrent: 1 });
     }
+  }
+
+  /** Lazily load skill rules for the active persona. Cached after first load. */
+  private async getSkillContext(): Promise<string> {
+    if (this.skillContext !== null) return this.skillContext;
+    if (!this.persona?.skillRef) {
+      this.skillContext = '';
+      return '';
+    }
+    try {
+      const rules = await loadSkillRules(this.persona.skillRef, {
+        tags: this.persona.focusTags,
+        maxRules: this.persona.maxRules,
+        skillsDir: this.skillsDir,
+      });
+      this.skillContext = formatRulesForPrompt(rules);
+    } catch {
+      this.skillContext = '';
+    }
+    return this.skillContext;
+  }
+
+  /** Build the persona prompt blocks (role, expertise, personality). */
+  private async buildPersonaBlocks(): Promise<{ roleBlock: string; expertiseBlock: string; personalityBlock: string }> {
+    if (!this.persona) {
+      // Custom tone fallback
+      return {
+        roleBlock: 'You are the AI Developer.',
+        expertiseBlock: '',
+        personalityBlock: this.customToneModifier ? `PERSONALITY/TONE: ${this.customToneModifier}` : '',
+      };
+    }
+    const expertise = await this.getSkillContext();
+    return {
+      roleBlock: this.persona.role,
+      expertiseBlock: expertise ? `\n      EXPERTISE CONTEXT (best practices guiding your analysis):\n      ${expertise}` : '',
+      personalityBlock: this.persona.personality ? `\n      PERSONALITY: ${this.persona.personality}` : '',
+    };
   }
 
   private async getJulesClient(): Promise<JulesClient> {
@@ -119,8 +161,12 @@ export class SessionSummarizer {
     }
     try {
       const client = await this.getJulesClient();
-      const { getSessionState } = await import('@google/jules-mcp');
-      const result = await getSessionState(client, this.sessionId);
+      const session = client.session(this.sessionId);
+      const info = await session.info();
+      const result: SessionStateResult = {
+        prompt: (info as any).prompt,
+        status: (info as any).state,
+      };
       this.cachedSessionState = { result, fetchedAt: now };
       return result;
     } catch (err) {
@@ -149,9 +195,9 @@ export class SessionSummarizer {
 
     let summary: string;
     if (isCodeTask) {
-      summary = await this.executeRequest(this.getCodePrompt(activityContext, sessionGoal, trajectory));
+      summary = await this.executeRequest(await this.getCodePrompt(activityContext, sessionGoal, trajectory));
     } else {
-      summary = await this.executeRequest(this.getPlanningPrompt(activityContext, sessionGoal, trajectory));
+      summary = await this.executeRequest(await this.getPlanningPrompt(activityContext, sessionGoal, trajectory));
     }
 
     // Record in activity log
@@ -166,15 +212,16 @@ export class SessionSummarizer {
   }
 
   // --- PROMPT 1: THE ACTIVE CODER (For Diffs) ---
-  private getCodePrompt(context: any, sessionGoal?: string, trajectory?: string): string {
-    const toneInstruction = this.toneModifier ? `\n      5. TONE: ${this.toneModifier}` : '';
+  private async getCodePrompt(context: any, sessionGoal?: string, trajectory?: string): Promise<string> {
+    const { roleBlock, expertiseBlock, personalityBlock } = await this.buildPersonaBlocks();
     const goalBlock = sessionGoal ? `\n      SESSION GOAL: ${sessionGoal}` : '';
     const trajectoryBlock = trajectory ? `\n      TRAJECTORY SO FAR:\n      ${trajectory}` : '';
+    const hasExpertise = !!expertiseBlock;
 
     return `
-      ROLE: You are the AI Developer.
-      TASK: Report the technical action taken in this activity, grounded in the session's goal and trajectory.
-      ${goalBlock}${trajectoryBlock}
+      ROLE: ${roleBlock}
+      TASK: Report the technical action taken in this activity, grounded in the session's goal and trajectory.${hasExpertise ? ' Weave in 1-2 brief, actionable recommendations from your expertise where relevant to the changes.' : ''}
+      ${goalBlock}${trajectoryBlock}${expertiseBlock}
 
       INPUT DATA GUIDANCE:
       - 'status': 'truncated_large_file' -> Infer changes from 'affectedScopes'.
@@ -191,22 +238,22 @@ export class SessionSummarizer {
          - NO: "I am updating..." or "Updated code" (too vague)
       2. FORMATTING: Wrap ALL filenames/classes/functions in backticks (\`).
       3. SPECIFICITY: Reference specific files, functions, or variables affected. Explain WHY the change was made relative to the session goal.
-      4. LENGTH: 200-400 chars.${toneInstruction}
+      4. LENGTH: ${hasExpertise ? '250-500' : '200-400'} chars.${personalityBlock ? `\n      5. ${personalityBlock}` : ''}
 
       OUTPUT:
     `;
   }
 
   // --- PROMPT 2: THE OBJECTIVE REPORTER (For Plans/Messages) ---
-  private getPlanningPrompt(context: any, sessionGoal?: string, trajectory?: string): string {
-    const toneInstruction = this.toneModifier ? `\n      6. TONE: ${this.toneModifier}` : '';
+  private async getPlanningPrompt(context: any, sessionGoal?: string, trajectory?: string): Promise<string> {
+    const { roleBlock, expertiseBlock, personalityBlock } = await this.buildPersonaBlocks();
     const goalBlock = sessionGoal ? `\n      SESSION GOAL: ${sessionGoal}` : '';
     const trajectoryBlock = trajectory ? `\n      TRAJECTORY SO FAR:\n      ${trajectory}` : '';
 
     return `
-      ROLE: You are a Project Logger.
+      ROLE: ${roleBlock}
       TASK: Summarize the event, grounded in the session's goal and what has happened so far.
-      ${goalBlock}${trajectoryBlock}
+      ${goalBlock}${trajectoryBlock}${expertiseBlock}
 
       NEW ACTIVITY:
       ${JSON.stringify(context)}
@@ -226,85 +273,61 @@ export class SessionSummarizer {
          - Be specific about what the plan/message addresses.
 
       4. LENGTH: 200-400 chars.
-      5. FORMATTING: Wrap filenames/classes in backticks (\`) when referenced.${toneInstruction}
+      5. FORMATTING: Wrap filenames/classes in backticks (\`) when referenced.${personalityBlock ? `\n      6. ${personalityBlock}` : ''}
 
       OUTPUT:
     `;
   }
 
-  // --- NEW: Generate rolling status narrative ---
+  // --- Generate rolling status narrative ---
   async generateStatus(activityIndex: number): Promise<string> {
-    if (!this.sessionId) throw new Error('sessionId required for generateStatus');
-
-    const client = await this.getJulesClient();
-    const { codeReview } = await import('@google/jules-mcp');
-
-    const [sessionState, review] = await Promise.all([
-      this.getCachedSessionState(),
-      codeReview(client, this.sessionId).catch(() => undefined),
-    ]);
-
-    if (!sessionState) throw new Error('Could not fetch session state');
-
+    const sessionState = await this.getCachedSessionState();
     const trajectory = this.getTrajectoryString();
-    const insights = review?.insights;
-    const filesSummary = review?.summary;
+    const goalBlock = sessionState?.prompt ? `SESSION GOAL: ${sessionState.prompt}` : '';
+    const statusBlock = sessionState?.status ? `SESSION STATUS: ${sessionState.status}` : '';
 
     return this.executeRequest(`
-      ROLE: You are a Session Status Reporter.
-      TASK: Provide a "where are we now" narrative for this coding session.
+      ROLE: You are a Session Activity Reporter.
+      TASK: Describe what happened at this point in the coding session.
 
-      SESSION GOAL: ${sessionState.prompt || 'Unknown'}
-      SESSION STATUS: ${sessionState.status}
+      ${goalBlock}
+      ${statusBlock}
       ACTIVITY COUNT: ${activityIndex + 1}
 
       TRAJECTORY (last 5 activities):
       ${trajectory}
 
-      ${filesSummary ? `FILES TOUCHED: ${filesSummary.totalFiles} total (${filesSummary.created} created, ${filesSummary.modified} modified, ${filesSummary.deleted} deleted)` : ''}
-      ${insights ? `INSIGHTS: ${insights.planRegenerations} plan regenerations, ${insights.failedCommandCount} failed commands, ${insights.completionAttempts} completion attempts` : ''}
-      ${sessionState.lastAgentMessage ? `LAST AGENT MESSAGE: ${sessionState.lastAgentMessage.content.slice(0, 200)}` : ''}
-
       INSTRUCTIONS:
-      1. Describe the current phase of work (planning, implementing, debugging, testing, etc.)
-      2. Summarize progress toward the session goal
-      3. Note any signals worth watching (failed commands, plan regenerations, etc.)
-      4. LENGTH: 200-500 chars
-      5. STYLE: Neutral, informative. Present tense. No first person.
+      1. Describe what phase of work was underway (planning, implementing, debugging, testing, etc.)
+      2. Summarize what was accomplished toward the session goal
+      3. LENGTH: 200-500 chars
+      4. STYLE: Neutral, informative. Past tense. No first person.
 
       OUTPUT:
     `, { preserveNewlines: true });
   }
 
-  // --- NEW: Generate per-activity code review ---
-  async generateCodeReview(activityId: string): Promise<string> {
-    if (!this.sessionId) throw new Error('sessionId required for generateCodeReview');
-
-    const client = await this.getJulesClient();
-    const { showDiff, codeReview } = await import('@google/jules-mcp');
-
-    const [diff, review] = await Promise.all([
-      showDiff(client, this.sessionId, { activityId }),
-      codeReview(client, this.sessionId, { activityId }).catch(() => undefined),
-    ]);
-
-    if (!diff.unidiffPatch) throw new Error('No diff available for this activity');
+  // --- Generate per-activity code review from provided diff ---
+  async generateCodeReview(
+    _activityId: string,
+    unidiffPatch: string,
+    files: { path: string; additions: number; deletions: number }[],
+  ): Promise<string> {
+    if (!unidiffPatch) throw new Error('No diff available for this activity');
 
     // Truncate large diffs to stay within token limits
-    const truncatedPatch = diff.unidiffPatch.length > 8000
-      ? diff.unidiffPatch.slice(0, 8000) + '\n... (truncated)'
-      : diff.unidiffPatch;
+    const truncatedPatch = unidiffPatch.length > 8000
+      ? unidiffPatch.slice(0, 8000) + '\n... (truncated)'
+      : unidiffPatch;
 
     return this.executeRequest(`
       ROLE: You are a Code Reviewer.
       TASK: Provide a concise code review for the changes in this activity.
 
-      FILES CHANGED: ${diff.files.map(f => `${f.path} (+${f.additions}/-${f.deletions})`).join(', ')}
+      FILES CHANGED: ${files.map(f => `${f.path} (+${f.additions}/-${f.deletions})`).join(', ')}
 
       DIFF:
       ${truncatedPatch}
-
-      ${review?.formatted ? `REVIEW CONTEXT:\n${review.formatted.slice(0, 1000)}` : ''}
 
       INSTRUCTIONS:
       Format your output EXACTLY as follows with each section on its own line:
@@ -333,27 +356,27 @@ export class SessionSummarizer {
   }
 
   async styleTransfer(existingSummary: string, activityType: string): Promise<string> {
-    const toneInstruction = this.toneModifier || 'professional tone';
+    const { roleBlock, expertiseBlock, personalityBlock } = await this.buildPersonaBlocks();
     const isCode = activityType === 'changeSet';
+    const hasExpertise = !!expertiseBlock;
 
     const raw = await this.executeRequest(`
-      ROLE: You are a Style Transfer Writer.
-      TASK: Rewrite the following summary in a new tone while preserving ALL technical details.
+      ROLE: ${roleBlock}
+      TASK: Rewrite the following summary through your expert lens while preserving ALL technical details.${hasExpertise ? ' Weave in 1-2 brief, actionable recommendations from your expertise where relevant.' : ''}
 
       ORIGINAL SUMMARY:
       ${existingSummary}
 
-      ACTIVITY TYPE: ${isCode ? 'Code Change' : 'Planning/Message'}
+      ACTIVITY TYPE: ${isCode ? 'Code Change' : 'Planning/Message'}${expertiseBlock}
 
       INSTRUCTIONS:
-      1. TONE: ${toneInstruction}
-      2. Preserve ALL technical details: filenames, function names, class names, and backtick-wrapped references.
-      3. Change ONLY voice, style, and personality. Do NOT add or remove technical content.
-      4. Keep the same approximate length (200-400 chars).
-      5. Maintain backtick formatting for all code references.
-      6. Do NOT start with "I" or use first person.
-      7. Output PLAIN TEXT only. No markdown formatting — no *, **, _, or quotation marks for emphasis or dialogue.
-      8. Write as a single continuous paragraph. No line breaks.
+      1. Preserve ALL technical details: filenames, function names, class names, and backtick-wrapped references.
+      2. ${hasExpertise ? 'Add brief, actionable insight from your expertise where the code change is relevant. Keep recommendations concise.' : 'Rewrite the summary in the voice described above.'}
+      3. LENGTH: ${hasExpertise ? '250-500' : '200-400'} chars.
+      4. Maintain backtick formatting for all code references.
+      5. Do NOT start with "I" or use first person.
+      6. Output PLAIN TEXT only. No markdown formatting — no *, **, _, or quotation marks for emphasis or dialogue.
+      7. Write as a single continuous paragraph. No line breaks.${personalityBlock ? `\n      8. ${personalityBlock}` : ''}
 
       OUTPUT:
     `);
@@ -440,6 +463,9 @@ export class SessionSummarizer {
   private simplifyActivity(activity: Activity): Record<string, any> {
     const base = { type: activity.type, originator: activity.originator };
 
+    // Collect text from non-code artifacts (bash output, etc.)
+    const artifactText = this.extractArtifactText(activity.artifacts);
+
     // 1. Code Changes
     const changeSet = activity.artifacts?.find(a => a.type === 'changeSet');
     if (changeSet && changeSet.gitPatch) {
@@ -450,34 +476,59 @@ export class SessionSummarizer {
       };
     }
 
-    // 2. Planning - EXTRACT ACTUAL TEXT
+    // 2. Planning — serialize all plan steps so the LLM has real content
     if (activity.type === 'planGenerated') {
-      // Deep extraction to find meaningful text
-      const plan = (activity as any).planGenerated?.plan || (activity as any).plan;
-      const firstStep = plan?.steps?.[0]?.title;
-      const activityTitle = (activity as any).title;
-
-      // Priority: Activity Title -> First Step Title -> Generic fallback
-      const description = activityTitle || firstStep || 'Plan generated with no details.';
-
-      return { ...base, description };
+      const plan = (activity as any).plan;
+      let description = '';
+      if (plan?.steps?.length > 0) {
+        description = plan.steps
+          .map((s: any) => `${s.index != null ? s.index + 1 : '-'}. ${s.title}${s.description ? ': ' + s.description : ''}`)
+          .join('\n');
+      } else if (plan) {
+        // Unknown plan structure — serialize for the LLM
+        const raw = JSON.stringify(plan);
+        description = raw.length > 2000 ? raw.slice(0, 2000) + '...' : raw;
+      } else {
+        description = 'Plan generated (no step details available).';
+      }
+      return { ...base, description, ...(artifactText ? { artifacts: artifactText } : {}) };
     }
 
     if (activity.type === 'planApproved') {
-      return { ...base, description: 'User approved the plan.' };
+      const planId = (activity as any).planId;
+      return { ...base, description: `Plan approved${planId ? ` (plan: ${planId})` : ''}.`, ...(artifactText ? { artifacts: artifactText } : {}) };
     }
 
     // 3. Messages
     if (activity.type === 'agentMessaged' || activity.type === 'userMessaged') {
-      return { ...base, message: (activity as any).message };
+      return { ...base, message: (activity as any).message, ...(artifactText ? { artifacts: artifactText } : {}) };
     }
 
-    // 4. Progress
+    // 4. Progress — include both title and description
     if (activity.type === 'progressUpdated') {
-      return { ...base, description: (activity as any).title };
+      const title = (activity as any).title || '';
+      const desc = (activity as any).description || '';
+      return { ...base, title, description: desc, ...(artifactText ? { artifacts: artifactText } : {}) };
     }
 
-    return base;
+    return { ...base, ...(artifactText ? { artifacts: artifactText } : {}) };
+  }
+
+  /** Extract readable text from non-code artifacts (bash output, etc.) */
+  private extractArtifactText(artifacts: Activity['artifacts']): string | null {
+    if (!artifacts?.length) return null;
+    const parts: string[] = [];
+    for (const a of artifacts) {
+      if (a.type === 'bashOutput') {
+        const bash = a as any;
+        const cmd = bash.command ? `$ ${bash.command}` : '';
+        const out = bash.stdout || '';
+        const err = bash.stderr || '';
+        const text = [cmd, out, err].filter(Boolean).join('\n').slice(0, 1000);
+        if (text) parts.push(text);
+      }
+    }
+    return parts.length > 0 ? parts.join('\n---\n') : null;
   }
 
   private buildSmartContext(rawDiff: string) {

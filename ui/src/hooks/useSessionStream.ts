@@ -27,11 +27,17 @@ export interface ProcessedActivity {
   versions?: Record<string, ActivityVersion>;
 }
 
+export interface PlayOptions {
+  afterIndex?: number;
+  restart?: boolean;
+  preserveVersionsFrom?: ProcessedActivity[];
+}
+
 export interface UseSessionStreamReturn {
   sessionInfo: SessionInfo | null;
   activities: ProcessedActivity[];
   sessionState: SessionState;
-  play: (sessionId: string, tone?: string, model?: string) => void;
+  play: (sessionId: string, tone?: string, model?: string, options?: PlayOptions) => void;
   pause: () => void;
   resume: () => void;
   stop: () => void;
@@ -41,7 +47,7 @@ export interface UseSessionStreamReturn {
   patchActivityVersion: (activityId: string, tone: string, model: string, data: Partial<ActivityVersion>) => void;
   switchActivityVersion: (activityId: string, tone: string, model: string) => void;
   switchAllVersions: (tone: string, model: string) => void;
-  loadFromStack: (stack: PrintStack) => void;
+  loadFromStack: (stack: PrintStack, sessionStatus?: string) => void;
   regenerate: (sourceStack: PrintStack, tone: string, model: string) => void;
   error: string | null;
 }
@@ -57,6 +63,8 @@ export function useSessionStream(): UseSessionStreamReturn {
   const toneRef = useRef<string | undefined>(undefined);
   const modelRef = useRef<string | undefined>(undefined);
   const sessionInfoRef = useRef<SessionInfo | null>(null);
+  const preservedVersionsRef = useRef<Map<string, Record<string, ActivityVersion>>>(new Map());
+  const modeRef = useRef<'append' | 'replace'>('append');
 
   const closeEventSource = useCallback(() => {
     if (eventSourceRef.current) {
@@ -96,6 +104,8 @@ export function useSessionStream(): UseSessionStreamReturn {
         summary: data.summary, tone, model,
         status: data.status, codeReview: data.codeReview,
       };
+      // Merge any previously cached versions for this activity
+      const preserved = preservedVersionsRef.current.get(data.activityId) || {};
       const activity: ProcessedActivity = {
         index: data.index,
         activityId: data.activityId,
@@ -109,9 +119,20 @@ export function useSessionStream(): UseSessionStreamReturn {
         status: data.status,
         codeReview: data.codeReview,
         unidiffPatch: data.unidiffPatch,
-        versions: key ? { [key]: initialVersion } : {},
+        versions: key ? { ...preserved, [key]: initialVersion } : preserved,
       };
-      setActivities((prev) => [...prev, activity]);
+      const mode = modeRef.current;
+      setActivities((prev) => {
+        if (mode === 'replace') {
+          const idx = prev.findIndex(a => a.activityId === data.activityId);
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = activity;
+            return updated;
+          }
+        }
+        return [...prev, activity];
+      });
 
       // Fetch the label PNG in the background
       const info = sessionInfoRef.current;
@@ -139,12 +160,14 @@ export function useSessionStream(): UseSessionStreamReturn {
     });
 
     es.addEventListener('session:complete', () => {
+      modeRef.current = 'append';
       setSessionState('complete');
       closeEventSource();
     });
 
     es.addEventListener('session:error', (e) => {
       const data = JSON.parse(e.data) as { error: string };
+      modeRef.current = 'append';
       setError(data.error);
       setSessionState('failed');
       closeEventSource();
@@ -154,6 +177,7 @@ export function useSessionStream(): UseSessionStreamReturn {
       // EventSource auto-reconnects, but if it fails permanently
       // the readyState will be CLOSED (2)
       if (es.readyState === EventSource.CLOSED) {
+        modeRef.current = 'append';
         setSessionState('failed');
         setError('Connection lost');
         closeEventSource();
@@ -161,13 +185,37 @@ export function useSessionStream(): UseSessionStreamReturn {
     };
   }, [closeEventSource]);
 
-  const play = useCallback((sessionId: string, tone?: string, model?: string) => {
+  const play = useCallback((sessionId: string, tone?: string, model?: string, options?: PlayOptions) => {
+    const { afterIndex, restart, preserveVersionsFrom } = options || {};
+
     sessionIdRef.current = sessionId;
     toneRef.current = tone;
     modelRef.current = model;
-    setActivities([]);
-    setSessionInfo(null);
-    connect(sessionId, tone, model);
+
+    // Save existing versions so they can be merged into incoming activities
+    if (preserveVersionsFrom && preserveVersionsFrom.length > 0) {
+      preservedVersionsRef.current = new Map(
+        preserveVersionsFrom.map(a => [a.activityId, a.versions || {}])
+      );
+    } else {
+      preservedVersionsRef.current = new Map();
+    }
+
+    if (restart) {
+      // Restart: keep existing activities visible, replace as data arrives
+      modeRef.current = 'replace';
+      connect(sessionId, tone, model);
+    } else if (afterIndex !== undefined && afterIndex >= 0) {
+      // Continue: keep existing activities, append new ones after afterIndex
+      modeRef.current = 'append';
+      connect(sessionId, tone, model, afterIndex);
+    } else {
+      // Fresh start: clear everything
+      modeRef.current = 'append';
+      setActivities([]);
+      setSessionInfo(null);
+      connect(sessionId, tone, model);
+    }
   }, [connect]);
 
   const pause = useCallback(() => {
@@ -198,15 +246,15 @@ export function useSessionStream(): UseSessionStreamReturn {
   const stop = useCallback(() => {
     const sessionId = sessionIdRef.current;
     closeEventSource();
-    setSessionState('idle');
-    setActivities([]);
-    setSessionInfo(null);
+    modeRef.current = 'append';
+    // Keep activities and sessionInfo visible — just stop streaming
+    setSessionState(activities.length > 0 ? 'ready' : 'idle');
     setError(null);
 
     if (sessionId) {
       fetch(`/api/session/${encodeURIComponent(sessionId)}/pause`, { method: 'POST' }).catch(() => {});
     }
-  }, [closeEventSource]);
+  }, [closeEventSource, activities.length]);
 
   const setTone = useCallback((tone: string) => {
     toneRef.current = tone;
@@ -222,7 +270,7 @@ export function useSessionStream(): UseSessionStreamReturn {
     ));
   }, []);
 
-  const loadFromStack = useCallback((stack: PrintStack) => {
+  const loadFromStack = useCallback((stack: PrintStack, sessionStatus?: string) => {
     const hydrated = stack.activities.map(a => {
       const normalizedTone = a.tone?.toLowerCase() || '';
       const key = normalizedTone && a.model ? versionKey(normalizedTone, a.model) : null;
@@ -234,8 +282,16 @@ export function useSessionStream(): UseSessionStreamReturn {
       return { ...a, tone: normalizedTone, imageUrl: undefined, versions };
     });
     setActivities(hydrated);
-    setSessionInfo({ sessionId: stack.sessionId, repo: stack.repo, title: '', state: 'completed' });
-    setSessionState('complete');
+    setSessionInfo({ sessionId: stack.sessionId, repo: stack.repo, title: '', state: sessionStatus || 'completed' });
+
+    // Map the SSR session status to our internal state
+    if (sessionStatus === 'in_progress') {
+      setSessionState('ready');
+    } else if (sessionStatus === 'failed') {
+      setSessionState('failed');
+    } else {
+      setSessionState('complete');
+    }
   }, []);
 
   const regenerate = useCallback((sourceStack: PrintStack, tone: string, model: string) => {
@@ -301,7 +357,7 @@ export function useSessionStream(): UseSessionStreamReturn {
       if (a.activityId !== activityId) return a;
       const v = a.versions?.[key];
       if (!v) return a;
-      return { ...a, summary: v.summary, tone: v.tone, model: v.model, status: v.status, codeReview: v.codeReview };
+      return { ...a, summary: v.summary, tone: v.tone, model: v.model, status: v.status ?? a.status, codeReview: v.codeReview ?? a.codeReview };
     }));
   }, []);
 
@@ -310,7 +366,7 @@ export function useSessionStream(): UseSessionStreamReturn {
     setActivities(prev => prev.map(a => {
       const v = a.versions?.[key];
       if (!v) return a;
-      return { ...a, summary: v.summary, tone: v.tone, model: v.model, status: v.status, codeReview: v.codeReview };
+      return { ...a, summary: v.summary, tone: v.tone, model: v.model, status: v.status ?? a.status, codeReview: v.codeReview ?? a.codeReview };
     }));
   }, []);
 

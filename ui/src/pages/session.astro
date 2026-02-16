@@ -11,18 +11,31 @@ if (sessionId) {
   try {
     const { connect } = await import('@google/jules-sdk');
     const jules = connect();
-    const session = jules.session(sessionId);
-    const info = await session.info();
-    const rawState = String(info.state || '').toLowerCase();
-    let status: 'completed' | 'in_progress' | 'failed' = 'in_progress';
-    if (rawState === 'completed') status = 'completed';
-    else if (rawState === 'failed') status = 'failed';
-    sessionMeta = {
-      title: info.title || '',
-      repo: info.sourceContext?.source?.replace('sources/github/', '') || '',
-      status,
-      prompt: info.prompt || '',
-    };
+
+    // Cache-only lookup — pure local, no network risk.
+    // The landing page's jules.sessions() call writes through to cache,
+    // so this will hit for any session the user has seen before.
+    const results = await jules.select({
+      from: 'sessions' as const,
+      where: { id: sessionId },
+      limit: 1,
+    });
+    const info = results[0] ?? null;
+
+    if (info) {
+      const rawState = String(info.state || '').toLowerCase();
+      let status: 'completed' | 'in_progress' | 'failed' = 'in_progress';
+      if (rawState === 'completed') status = 'completed';
+      else if (rawState === 'failed') status = 'failed';
+      sessionMeta = {
+        title: info.title || '',
+        repo: info.sourceContext?.source?.replace('sources/github/', '') || '',
+        status,
+        prompt: info.prompt || '',
+      };
+    }
+    // Cache miss (first-ever visit) — render shell without metadata.
+    // The streaming flow will populate it client-side.
   } catch (err: any) {
     console.error('[SSR] Failed to load session info:', err);
   }

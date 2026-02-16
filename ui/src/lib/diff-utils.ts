@@ -46,3 +46,28 @@ export function extractFileDiff(unidiffPatch: string, filePath: string): DiffLin
 
   return result;
 }
+
+/**
+ * Extracts diff lines within a specific line range from a unidiff patch.
+ * Falls back to the first 12 lines of the full file diff if the range is empty (hallucinated lines).
+ */
+export function extractLineRange(
+  unidiffPatch: string,
+  filePath: string,
+  startLine: number,
+  endLine: number,
+  contextLines = 1,
+): DiffLine[] {
+  const allLines = extractFileDiff(unidiffPatch, filePath);
+  const filtered = allLines.filter(line => {
+    const lineNum = line.newLineNumber ?? line.oldLineNumber;
+    if (!lineNum) return line.type === 'header';
+    return lineNum >= startLine - contextLines && lineNum <= endLine + contextLines;
+  });
+
+  // Strip lone headers when the requested range had no real content
+  const hasContent = filtered.some(l => l.type !== 'header');
+  if (!hasContent) return [];
+
+  return filtered;
+}

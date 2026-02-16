@@ -5,6 +5,7 @@ export type SessionState =
   | 'streaming'
   | 'paused'
   | 'complete'
+  | 'ready'
   | 'failed'
   | 'waiting';
 
@@ -16,6 +17,7 @@ export interface TopBarProps {
   onSessionInput?: (id: string) => void;
   onSessionClose?: () => void;
   onPlay?: () => void;
+  onRestart?: () => void;
   onPause?: () => void;
   onStop?: () => void;
   onSettings?: () => void;
@@ -67,6 +69,7 @@ export function TopBar({
   onSessionInput,
   onSessionClose,
   onPlay,
+  onRestart,
   onPause,
   onStop,
   onSettings,
@@ -129,6 +132,15 @@ export function TopBar({
                   Complete
                 </span>
               </div>
+            ) : sessionState === 'ready' ? (
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[14px] text-[#72728a]" style={FILLED}>
+                  play_arrow
+                </span>
+                <span className="text-[#72728a] text-xs font-medium">
+                  Ready
+                </span>
+              </div>
             ) : sessionState === 'failed' ? (
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-[14px] text-red-500">
@@ -150,7 +162,7 @@ export function TopBar({
             ) : null}
 
             {/* Transport controls */}
-            {sessionState === 'idle' || !sessionState ? (
+            {sessionState === 'idle' || sessionState === 'ready' || !sessionState ? (
               <button className={PILL} onClick={onPlay}>
                 <span
                   className="material-symbols-outlined text-[16px]"
@@ -159,6 +171,11 @@ export function TopBar({
                   play_arrow
                 </span>
                 <span className="text-[13px] font-semibold">Play</span>
+              </button>
+            ) : sessionState === 'complete' ? (
+              <button className={PILL} onClick={onPlay}>
+                <span className="material-symbols-outlined text-[16px]" style={FILLED}>replay</span>
+                <span className="text-[13px] font-semibold">Replay</span>
               </button>
             ) : sessionState === 'streaming' ? (
               <div className="flex items-center gap-2">

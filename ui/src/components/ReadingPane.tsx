@@ -212,11 +212,11 @@ export function ReadingPane({ toneName, modelName, summary, files = [], onShare,
         {/* Divider */}
         {status ? <div className="h-px bg-[#2a2a35] w-full mb-[32px]" /> : null}
 
-        {/* Current Status */}
+        {/* What Happened */}
         {status ? (
           <div className="mb-[32px]">
             <span className="text-[11px] font-bold tracking-widest text-[#72728a] uppercase mb-3 block">
-              Current Status
+              What Happened
             </span>
             <ReactMarkdown
               disallowedElements={['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'img', 'blockquote', 'pre']}

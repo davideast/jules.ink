@@ -60,3 +60,16 @@
 .skeleton-pulse {
   animation: skeleton-pulse 1.5s ease-in-out infinite;
 }
+
+/* sugar-high syntax highlighting — dark theme (uses CSS custom properties) */
+:root {
+  --sh-class: #ffcb6b;
+  --sh-identifier: #c0c0d0;
+  --sh-sign: #89ddff;
+  --sh-property: #82aaff;
+  --sh-entity: #82aaff;
+  --sh-jsxliterals: #c0c0d0;
+  --sh-string: #c3e88d;
+  --sh-keyword: #c792ea;
+  --sh-comment: #546e7a;
+}
