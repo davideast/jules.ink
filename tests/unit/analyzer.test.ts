@@ -38,4 +38,87 @@ describe('ChangeSet Analyzer', () => {
     expect(result.totalFiles).toBe(0);
     expect(result.totalInsertions).toBe(0);
   });
+
+  it('ignores lockfiles and noise', () => {
+    const diff = `
+diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1 +1 @@
+-old
++new
+diff --git a/src/index.ts b/src/index.ts
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -1 +1,2 @@
++new line
+`;
+    const result = analyzeChangeSet(diff);
+    expect(result.totalFiles).toBe(1);
+    expect(result.files[0].path).toBe('src/index.ts');
+    expect(result.totalInsertions).toBe(1);
+  });
+
+  it('sorts files by total changes descending', () => {
+    const diff = `
+diff --git a/small.ts b/small.ts
+--- a/small.ts
++++ b/small.ts
+@@ -1 +1,2 @@
++1
+diff --git a/large.ts b/large.ts
+--- a/large.ts
++++ b/large.ts
+@@ -1 +1,6 @@
++1
++2
++3
++4
++5
+diff --git a/medium.ts b/medium.ts
+--- a/medium.ts
++++ b/medium.ts
+@@ -1 +1,4 @@
++1
++2
++3
+`;
+    const result = analyzeChangeSet(diff);
+    expect(result.totalFiles).toBe(3);
+    expect(result.files[0].path).toBe('large.ts');
+    expect(result.files[1].path).toBe('medium.ts');
+    expect(result.files[2].path).toBe('small.ts');
+  });
+
+  it('handles renamed files correctly', () => {
+    const diff = `
+diff --git a/old-name.ts b/new-name.ts
+similarity index 100%
+rename from old-name.ts
+rename to new-name.ts
+`;
+    const result = analyzeChangeSet(diff);
+    expect(result.totalFiles).toBe(1);
+    expect(result.files[0].path).toBe('new-name.ts');
+    expect(result.files[0].totalChanges).toBe(0);
+  });
+
+  it('handles binary files gracefully', () => {
+    const diff = `
+diff --git a/image.png b/image.png
+new file mode 100644
+index 0000000..1234567
+Binary files /dev/null and b/image.png differ
+`;
+    const result = analyzeChangeSet(diff);
+    expect(result.totalFiles).toBe(1);
+    expect(result.files[0].path).toBe('image.png');
+    expect(result.totalInsertions).toBe(0);
+  });
+
+  it('handles malformed diff strings gracefully', () => {
+    const result = analyzeChangeSet('this is not a diff');
+    expect(result.totalFiles).toBe(0);
+    expect(result.files.length).toBe(0);
+  });
 });
