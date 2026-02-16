@@ -44,13 +44,14 @@ describe('ChangeSet Analyzer', () => {
 diff --git a/package-lock.json b/package-lock.json
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -1 +1 @@
+@@ -1,1 +1,1 @@
 -old
 +new
 diff --git a/src/index.ts b/src/index.ts
 --- a/src/index.ts
 +++ b/src/index.ts
-@@ -1 +1,2 @@
+@@ -1,1 +1,1 @@
+-old
 +new line
 `;
     const result = analyzeChangeSet(diff);
@@ -64,12 +65,14 @@ diff --git a/src/index.ts b/src/index.ts
 diff --git a/small.ts b/small.ts
 --- a/small.ts
 +++ b/small.ts
-@@ -1 +1,2 @@
-+1
+@@ -1,1 +1,1 @@
+-old
++new
 diff --git a/large.ts b/large.ts
 --- a/large.ts
 +++ b/large.ts
-@@ -1 +1,6 @@
+@@ -1,1 +1,5 @@
+-old
 +1
 +2
 +3
@@ -78,7 +81,8 @@ diff --git a/large.ts b/large.ts
 diff --git a/medium.ts b/medium.ts
 --- a/medium.ts
 +++ b/medium.ts
-@@ -1 +1,4 @@
+@@ -1,1 +1,3 @@
+-old
 +1
 +2
 +3
