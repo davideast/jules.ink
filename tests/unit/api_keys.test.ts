@@ -1,4 +1,4 @@
-import { expect, test, describe, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { GET } from "../../ui/src/pages/api/keys";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -30,7 +30,7 @@ describe("API Keys Endpoint", () => {
     // We need to clear any cached env if possible, but readEnv reads from file every time
 
     const response = await GET({} as any);
-    const data = await response.json();
+    const data = await (response as any).json();
 
     expect(data.configured).toBe(true);
     expect(data.geminiKey).toBeUndefined();
@@ -41,7 +41,7 @@ describe("API Keys Endpoint", () => {
     await fs.writeFile(ENV_PATH, "");
 
     const response = await GET({} as any);
-    const data = await response.json();
+    const data = await (response as any).json();
 
     expect(data.configured).toBe(false);
     expect(data.geminiKey).toBeUndefined();
