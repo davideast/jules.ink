@@ -7,15 +7,11 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [initialGeminiKey, setInitialGeminiKey] = useState('');
-  const [initialJulesKey, setInitialJulesKey] = useState('');
 
   useEffect(() => {
     fetch('/api/keys')
       .then((res) => res.json())
-      .then((data) => {
-        setInitialGeminiKey(data.geminiKey || '');
-        setInitialJulesKey(data.julesKey || '');
+      .then(() => {
         setLoaded(true);
       })
       .catch(() => {
@@ -71,8 +67,6 @@ export function SettingsPage() {
               subtitle="Enter new API keys to replace the current ones. Both keys are required."
               submitLabel="Save"
               footerText={saved ? 'Keys updated successfully' : null}
-              initialGeminiKey={initialGeminiKey}
-              initialJulesKey={initialJulesKey}
             />
           ) : (
             <div className="flex items-center justify-center h-64 text-[#72728a] text-sm">
