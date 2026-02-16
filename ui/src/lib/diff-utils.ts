@@ -65,11 +65,9 @@ export function extractLineRange(
     return lineNum >= startLine - contextLines && lineNum <= endLine + contextLines;
   });
 
-  // Fallback: if range returned nothing useful (hallucinated lines), show first 12 lines
+  // Strip lone headers when the requested range had no real content
   const hasContent = filtered.some(l => l.type !== 'header');
-  if (!hasContent && allLines.length > 0) {
-    return allLines.slice(0, 12);
-  }
+  if (!hasContent) return [];
 
   return filtered;
 }

@@ -58,9 +58,35 @@ export interface InterpretiveAnalysis {
   generatedAt: string;
 }
 
+export interface PromptStrength {
+  label: string;
+  evidence: string;
+}
+
+export interface PromptWeakness {
+  label: string;
+  evidence: string;
+  severity: 'minor' | 'moderate' | 'major';
+}
+
+export interface PromptImprovements {
+  originalPrompt: string;
+  strengths: PromptStrength[];
+  weaknesses: PromptWeakness[];
+  improvedPrompt: string;
+  summary: string;   // 1 sentence, ~15 words, core quality message
+  detail: string;    // longer explanation (the old overallAssessment)
+  /** @deprecated Use summary + detail instead. Kept for backward compat with cached data. */
+  overallAssessment?: string;
+  model: string;
+  generatedAt: string;
+}
+
 export interface AnalysisCache {
   structural?: StructuralAnalysis;
   interpretive?: Record<string, InterpretiveAnalysis>;
+  promptImprovements?: Record<string, PromptImprovements>;
+  resolvedCodeRefs?: Record<string, CodeRef>;
 }
 
 export interface SessionAnalysisRequest {
@@ -75,4 +101,5 @@ export interface SessionAnalysisRequest {
 export interface SessionAnalysisResponse {
   structural: StructuralAnalysis;
   interpretive: InterpretiveAnalysis;
+  promptImprovements?: PromptImprovements;
 }

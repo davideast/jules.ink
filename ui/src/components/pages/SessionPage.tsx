@@ -30,16 +30,8 @@ import {
 } from '../../lib/print-stack';
 import { EXPERT_PERSONAS } from '../../lib/personas';
 import { parseCodeReview, aggregateReviews } from '../../lib/parse-code-review';
-import type { SessionAnalysisResponse, InterpretiveAnalysis, CodeRefMap } from '../../lib/session-analysis';
+import type { SessionAnalysisResponse, InterpretiveAnalysis, PromptImprovements } from '../../lib/session-analysis';
 import type { FileTreeNode } from '../FileTree';
-
-/** Returns true only when codeRefs has at least one entry with a valid startLine. */
-function hasValidCodeRefs(codeRefs?: CodeRefMap): boolean {
-  if (!codeRefs) return false;
-  return Object.values(codeRefs).some(
-    refs => refs?.some(r => typeof r.startLine === 'number'),
-  );
-}
 
 const RIGHT_PANEL_TABS: Tab[] = [
   { id: 'narration', label: 'Activity' },
@@ -112,6 +104,7 @@ export function SessionPage({
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [selectedIntentIndex, setSelectedIntentIndex] = useState<number | null>(null);
   const [interpretiveVersions, setInterpretiveVersions] = useState<Record<string, InterpretiveAnalysis>>({});
+  const [promptImprovementsVersions, setPromptImprovementsVersions] = useState<Record<string, PromptImprovements>>({});
 
   const stackMetadataRef = useRef<{ startedAt: string; tone: string; model: string; repo: string } | null>(null);
   const skipAutoSelectRef = useRef(false);
@@ -180,25 +173,54 @@ export function SessionPage({
         setLoadedStack(stack);
 
         // Hydrate cached session analysis if available for current tone/model
-        // Only use cache if it has valid codeRefs (non-empty, with startLine)
-        if (hasValidCodeRefs(stack.analysis?.structural?.codeRefs)) {
+        if (stack.analysis?.structural) {
           const cachedTone = stack.tone || initialTone || 'React Perf Expert';
           const firstModel = stack.activities[0]?.model;
           const cachedModel = firstModel || initialModel || 'gemini-2.5-flash-lite';
           const vKey = versionKey(cachedTone, cachedModel);
-          const cachedInterp = stack.analysis!.interpretive?.[vKey];
-          if (hasValidCodeRefs(cachedInterp?.codeRefs)) {
-            setSessionAnalysis({ structural: stack.analysis!.structural!, interpretive: cachedInterp! });
+          let cachedInterp = stack.analysis.interpretive?.[vKey];
+
+          // Fallback: if exact vKey misses (e.g. snapshot stacks where
+          // activity.model is null), use the latest available version
+          let resolvedModel = cachedModel;
+          if (!cachedInterp && stack.analysis.interpretive) {
+            const entries = Object.entries(stack.analysis.interpretive);
+            if (entries.length > 0) {
+              // Prefer latest by generatedAt
+              entries.sort((a, b) =>
+                (b[1].generatedAt || '').localeCompare(a[1].generatedAt || ''),
+              );
+              const [bestKey, bestInterp] = entries[0];
+              cachedInterp = bestInterp;
+              // Sync selectors to match the loaded version
+              if (bestInterp.tone) {
+                const persona = EXPERT_PERSONAS.find(
+                  p => p.name.toLowerCase() === bestInterp.tone.toLowerCase(),
+                );
+                if (persona) setSelectedTone(persona.name);
+              }
+              if (bestInterp.model) {
+                setSelectedModel(bestInterp.model);
+                resolvedModel = bestInterp.model;
+              }
+            }
           }
-          // Load all interpretive versions that have valid codeRefs
-          if (stack.analysis!.interpretive) {
-            const validVersions: Record<string, InterpretiveAnalysis> = {};
-            for (const [key, interp] of Object.entries(stack.analysis!.interpretive)) {
-              if (hasValidCodeRefs(interp.codeRefs)) validVersions[key] = interp;
-            }
-            if (Object.keys(validVersions).length > 0) {
-              setInterpretiveVersions(validVersions);
-            }
+
+          const cachedPI = stack.analysis.promptImprovements?.[resolvedModel];
+          if (cachedInterp) {
+            setSessionAnalysis({
+              structural: stack.analysis.structural,
+              interpretive: cachedInterp,
+              ...(cachedPI ? { promptImprovements: cachedPI } : {}),
+            });
+          }
+          // Load all interpretive versions
+          if (stack.analysis.interpretive) {
+            setInterpretiveVersions({ ...stack.analysis.interpretive });
+          }
+          // Load all prompt improvements versions
+          if (stack.analysis.promptImprovements) {
+            setPromptImprovementsVersions(stack.analysis.promptImprovements);
           }
         }
       }
@@ -560,10 +582,7 @@ export function SessionPage({
           sessionPrompt,
           tone: selectedTone,
           model: selectedModel,
-          // Only reuse structural if it has valid codeRefs; otherwise force Phase 1 to re-run
-          structuralAnalysis: hasValidCodeRefs(sessionAnalysis?.structural?.codeRefs)
-            ? sessionAnalysis!.structural
-            : undefined,
+          structuralAnalysis: sessionAnalysis?.structural,
         }),
       });
       if (!res.ok) {
@@ -574,6 +593,9 @@ export function SessionPage({
       setSessionAnalysis(data);
       const vKey = versionKey(selectedTone, selectedModel);
       setInterpretiveVersions(prev => ({ ...prev, [vKey]: data.interpretive }));
+      if (data.promptImprovements) {
+        setPromptImprovementsVersions(prev => ({ ...prev, [data.promptImprovements!.model]: data.promptImprovements! }));
+      }
     } catch (err: any) {
       setAnalysisError(err.message);
       console.error('Analysis regeneration failed:', err);
@@ -622,6 +644,9 @@ export function SessionPage({
       setSessionAnalysis(data);
       const vKey = versionKey(selectedTone, selectedModel);
       setInterpretiveVersions(prev => ({ ...prev, [vKey]: data.interpretive }));
+      if (data.promptImprovements) {
+        setPromptImprovementsVersions(prev => ({ ...prev, [data.promptImprovements!.model]: data.promptImprovements! }));
+      }
     } catch (err: any) {
       setAnalysisError(err.message);
       console.error('Analysis generation failed:', err);
@@ -854,15 +879,6 @@ export function SessionPage({
     return map;
   }, [stream.activities, loadedStack]);
 
-  // Merge codeRefs from both structural and interpretive analysis
-  const mergedCodeRefs = useMemo(() => {
-    if (!sessionAnalysis) return undefined;
-    return {
-      ...sessionAnalysis.structural.codeRefs,
-      ...sessionAnalysis.interpretive.codeRefs,
-    };
-  }, [sessionAnalysis]);
-
   // Session-level versions: permutations where ALL activities have cached data
   const analysisVersions = useMemo(() => {
     if (stream.activities.length === 0) return {};
@@ -897,15 +913,16 @@ export function SessionPage({
     // For the Analysis tab: switch the session analysis to the cached interpretive version
     const vKey = versionKey(tone, model);
     const interp = interpretiveVersions[vKey];
+    const pi = promptImprovementsVersions[model]; // lookup by model only
     if (interp && sessionAnalysis) {
-      setSessionAnalysis({ structural: sessionAnalysis.structural, interpretive: interp });
+      setSessionAnalysis({ structural: sessionAnalysis.structural, interpretive: interp, promptImprovements: pi });
     }
     // Also switch per-activity labels so the Activity tab stays in sync
     stream.switchAllVersions(tone, model);
     const persona = EXPERT_PERSONAS.find(p => p.name.toLowerCase() === tone.toLowerCase());
     setSelectedTone(persona?.name || tone);
     setSelectedModel(model);
-  }, [stream, interpretiveVersions, sessionAnalysis]);
+  }, [stream, interpretiveVersions, promptImprovementsVersions, sessionAnalysis]);
 
   // --- File analysis drill-in data ---
   const fileAnalysisData = useMemo<FileAnalysisData | null>(() => {
@@ -1217,7 +1234,9 @@ export function SessionPage({
                     verdict={sessionAnalysis ? analysisData.verdict : undefined}
                     onIntentClick={handleIntentClick}
                     fileDiffs={sessionAnalysis ? fileDiffMap : undefined}
-                    codeRefs={mergedCodeRefs}
+                    stackId={currentStackId || loadedStack?.id}
+                    resolvedCodeRefs={loadedStack?.analysis?.resolvedCodeRefs}
+                    promptImprovements={sessionAnalysis?.promptImprovements}
                   />
                 )
               ) : activeTab === 'recs' ? (
