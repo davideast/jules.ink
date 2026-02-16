@@ -6,6 +6,7 @@ dist
 output/
 *.js
 test-results/
+benchmarks/results.jsonl
 .astro
 screens
 
