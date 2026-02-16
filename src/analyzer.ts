@@ -12,6 +12,9 @@ const IGNORE_PATTERNS = [
   '**/.DS_Store'
 ];
 
+// Pre-compile the matcher to avoid redundant work in the loop
+const isIgnored = micromatch.matcher(IGNORE_PATTERNS);
+
 /**
  * Transforms a raw Unidiff string into structured stats,
  * filtering out noise to match the Summarizer's logic.
@@ -32,7 +35,7 @@ export function analyzeChangeSet(unidiffPatch: string): ChangeSetSummary {
     // 2. APPLY FILTER LOGIC (Match simplifyActivity)
     // If it's a lockfile or noise, skip it completely. 
     // We don't want these taking up space on the physical label.
-    if (micromatch.isMatch(path, IGNORE_PATTERNS)) {
+    if (isIgnored(path)) {
       continue;
     }
 
