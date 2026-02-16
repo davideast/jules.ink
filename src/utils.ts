@@ -68,7 +68,7 @@ export function parseMarkdownSegments(text: string): TextSegment[] {
  * Advanced wrapper that handles mixed-style segments AND long-word breaking.
  */
 export function calculateWrappedSegments(
-  ctx: any,
+  ctx: CanvasRenderingContext2D,
   segments: TextSegment[],
   maxWidth: number,
   normalFont: string,
