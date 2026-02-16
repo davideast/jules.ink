@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isValidStackId } from '../../../lib/validation';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = process.env.JULES_INK_ROOT || path.resolve(__dirname, '../../../../../');
@@ -60,6 +61,14 @@ export const POST: APIRoute = async ({ request }) => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
+
+    if (!isValidStackId(stack.id)) {
+      return new Response(JSON.stringify({ error: 'invalid stack id' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     const filepath = path.join(STACKS_DIR, `${stack.id}.json`);
 
     // Immutability guard: don't overwrite a completed stack with streaming data
