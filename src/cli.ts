@@ -97,7 +97,7 @@ program
           // Save to disk
           const filename = `${event.index.toString().padStart(3, '0')}_${event.activityType}.png`;
           const filePath = path.join(outDir, filename);
-          fs.writeFileSync(filePath, buffer);
+          await fs.promises.writeFile(filePath, buffer);
 
           // Print if printer available
           if (printer) {
