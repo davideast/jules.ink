@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import path from 'node:path';
-import { SessionSummarizer, resolvePersonaByName } from 'jules-ink';
+import { SessionSummarizer } from 'jules-ink/summarizer';
+import { resolvePersonaByName } from 'jules-ink/expert-personas';
 import { readEnv } from '../../lib/api-keys';
 
 /** Regenerate a single activity summary with a new tone/model. */

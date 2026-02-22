@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { loadTones, saveTone } from 'jules-ink';
+import { loadTones, saveTone } from 'jules-ink/tones';
 
 export const GET: APIRoute = async () => {
   try {

@@ -43,6 +43,7 @@ While `src/types.ts` exists, many types are defined inline or within specific mo
 ## Action Items
 
 ### A. Eliminate Barrel Files
+*   **Status:** Completed on 2026-02-22
 *   **Action:** Deprecate `src/index.ts`.
 *   **Implementation:** Remove `src/index.ts` and refactor all imports to point directly to the source files (e.g., `import { generateLabel } from './label-generator.js'`). This eliminates the central bottleneck.
 
