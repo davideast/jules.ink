@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseMarkdownSegments, calculateWrappedLines } from '../../src/utils.js';
+import { parseMarkdownSegments, calculateWrappedLines } from '../../../src/label/text.js';
 
 describe('parseMarkdownSegments', () => {
   it('should handle plain text without backticks', () => {

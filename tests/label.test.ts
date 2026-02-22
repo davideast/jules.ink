@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateLabel } from '../src/label-generator.js';
+import { generateLabel } from '../src/label/renderer.js';
 import fs from 'fs';
 import path from 'path';
 

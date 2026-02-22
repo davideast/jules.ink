@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { generateLabel } from './label-generator.js';
+import { generateLabel } from './label/renderer.js';
 import thermal from './print.js';
 import fs from 'fs';
 import path from 'path';
