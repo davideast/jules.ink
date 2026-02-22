@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { parseMarkdownSegments } from '../../src/utils.js';
+import { describe, it, expect, vi } from 'vitest';
+import { parseMarkdownSegments, calculateWrappedLines } from '../../src/utils.js';
 
 describe('parseMarkdownSegments', () => {
   it('should handle plain text without backticks', () => {
@@ -92,5 +92,55 @@ describe('parseMarkdownSegments', () => {
       { text: 'multiple', isCode: true },
       { text: ' segments', isCode: false }
     ]);
+  });
+});
+
+describe('calculateWrappedLines', () => {
+  const mockCtx = {
+    measureText: vi.fn()
+  } as any;
+
+  it('should return a single line if it fits', () => {
+    mockCtx.measureText.mockImplementation((text: string) => ({ width: text.length * 10 }));
+    const result = calculateWrappedLines(mockCtx, 'hello world', 200);
+    expect(result).toEqual(['hello world']);
+  });
+
+  it('should wrap text that exceeds maxWidth', () => {
+    mockCtx.measureText.mockImplementation((text: string) => ({ width: text.length * 10 }));
+    // "hello world" is 110px. 110 < 60 is false.
+    const result = calculateWrappedLines(mockCtx, 'hello world', 60);
+    expect(result).toEqual(['hello', 'world']);
+  });
+
+  it('should not wrap if it fits perfectly', () => {
+    mockCtx.measureText.mockImplementation((text: string) => ({ width: text.length * 10 }));
+    // "a b" is 30px. maxWidth 30px.
+    // 30 <= 30 is true. It should not wrap.
+    const result = calculateWrappedLines(mockCtx, 'a b', 30);
+    expect(result).toEqual(['a b']);
+  });
+
+  it('should handle empty string', () => {
+    const result = calculateWrappedLines(mockCtx, '', 100);
+    expect(result).toEqual(['']);
+  });
+
+  it('should handle single word', () => {
+    mockCtx.measureText.mockImplementation((text: string) => ({ width: text.length * 10 }));
+    const result = calculateWrappedLines(mockCtx, 'hello', 10);
+    expect(result).toEqual(['hello']);
+  });
+
+  it('should handle long words exceeding maxWidth', () => {
+    mockCtx.measureText.mockImplementation((text: string) => ({ width: text.length * 10 }));
+    const result = calculateWrappedLines(mockCtx, 'superlongword', 50);
+    expect(result).toEqual(['superlongword']);
+  });
+
+  it('should wrap multiple lines', () => {
+    mockCtx.measureText.mockImplementation((text: string) => ({ width: text.length * 10 }));
+    const result = calculateWrappedLines(mockCtx, 'one two three', 40);
+    expect(result).toEqual(['one', 'two', 'three']);
   });
 });

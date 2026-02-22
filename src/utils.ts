@@ -9,7 +9,7 @@ export function calculateWrappedLines(ctx: CanvasRenderingContext2D, text: strin
   for (let i = 1; i < words.length; i++) {
     const word = words[i];
     const width = ctx.measureText(currentLine + " " + word).width;
-    if (width < maxWidth) {
+    if (width <= maxWidth) {
       currentLine += " " + word;
     } else {
       lines.push(currentLine);
