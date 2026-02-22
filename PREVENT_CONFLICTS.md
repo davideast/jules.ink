@@ -64,6 +64,7 @@ While `src/types.ts` exists, many types are defined inline or within specific mo
     *   `src/server.ts`: Should only contain Hono route definitions and call these services.
 
 ### D. Unify Diff Parsing
+*   **Status:** Completed on 2026-02-22
 *   **Action:** Centralize diff parsing logic.
 *   **Implementation:** `src/summarizer.ts` and `src/analyzer.ts` both use `parse-diff` and `micromatch`.
     *   Move all diff parsing, filtering, and token counting logic to `src/analyzer.ts`.
