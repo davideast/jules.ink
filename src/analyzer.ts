@@ -1,5 +1,6 @@
 import parseDiff from 'parse-diff';
 import micromatch from 'micromatch';
+import { encode } from 'gpt-tokenizer';
 import { ChangeSetSummary, FileImpact } from './types.js';
 
 // 1. Define the same Ignore Patterns used in your Summarizer
@@ -9,11 +10,15 @@ const IGNORE_PATTERNS = [
   '**/*.map',
   '**/dist/**',
   '**/*.min.js',
-  '**/.DS_Store'
+  '**/.DS_Store',
+  '**/*.d.ts'
 ];
 
+const TOKEN_LIMIT_PER_FILE = 2000;
+const MAX_TOTAL_TOKENS = 6000;
+
 // Pre-compile the matcher to avoid redundant work in the loop
-const isIgnored = micromatch.matcher(IGNORE_PATTERNS);
+const isIgnored = (path: string) => micromatch.isMatch(path, IGNORE_PATTERNS);
 
 /**
  * Transforms a raw Unidiff string into structured stats,
@@ -67,4 +72,45 @@ export function analyzeChangeSet(unidiffPatch: string): ChangeSetSummary {
     // Updated summary string to match the new numeric style
     summaryString: `${files.length} files | +${totalInsertions} / -${totalDeletions}`
   };
+}
+
+export interface ContextAnalysisFile {
+  file: string;
+  status: 'included' | 'truncated_budget_exceeded' | 'truncated_large_file' | 'ignored_artifact';
+  changes?: string;
+  diff?: string;
+  summary?: string;
+  affectedMethods?: string[];
+  affectedScopes?: string[];
+}
+
+export function analyzeContextForPrompt(rawDiff: string): ContextAnalysisFile[] {
+  const files = parseDiff(rawDiff);
+  let currentTokenCount = 0;
+  return files.map(file => {
+    const filePath = file.to || file.from || 'unknown';
+    if (isIgnored(filePath)) {
+      return { file: filePath, status: 'ignored_artifact', changes: `+${file.additions}/-${file.deletions}` };
+    }
+    const fileDiffString = file.chunks.map(c =>
+      [c.content, ...c.changes.map(change => change.content)].join('\n')
+    ).join('\n');
+    const fileTokens = encode(fileDiffString).length;
+
+    if (currentTokenCount + fileTokens > MAX_TOTAL_TOKENS) {
+      return { file: filePath, status: 'truncated_budget_exceeded', summary: `Modified ${file.additions} lines`, affectedMethods: extractHunkHeaders(file.chunks) };
+    }
+    if (fileTokens > TOKEN_LIMIT_PER_FILE) {
+      return { file: filePath, status: 'truncated_large_file', summary: `Large refactor (+${file.additions}/-${file.deletions})`, affectedScopes: extractHunkHeaders(file.chunks) };
+    }
+    currentTokenCount += fileTokens;
+    return { file: filePath, status: 'included', diff: fileDiffString };
+  });
+}
+
+export function extractHunkHeaders(chunks: any[]): string[] {
+  return chunks.map(chunk => {
+    const headerMatch = chunk.content.match(/@@.*?@@\s*(.*)/);
+    return headerMatch ? headerMatch[1].trim() : null;
+  }).filter(Boolean).slice(0, 5);
 }

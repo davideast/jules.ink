@@ -8,28 +8,14 @@ interface SessionStateResult {
   status?: string;
   lastAgentMessage?: { content: string };
 }
-import parseDiff from 'parse-diff';
-import micromatch from 'micromatch';
-import { encode } from 'gpt-tokenizer';
 import Bottleneck from 'bottleneck';
 import { type ExpertPersona, resolvePersona, resolvePersonaByName, formatRulesForPrompt } from './expert-personas.js';
 import { loadSkillRules } from './skill-loader.js';
+import { analyzeContextForPrompt, analyzeChangeSet } from './analyzer.js';
 
 // --- Configuration Constants ---
 const CLOUD_MODEL_NAME = 'gemini-2.5-flash-lite';
 const LOCAL_MODEL_DEFAULT = 'gemma3:4b';
-
-const TOKEN_LIMIT_PER_FILE = 2000;
-const MAX_TOTAL_TOKENS = 6000;
-
-const IGNORE_PATTERNS = [
-  '**/package-lock.json',
-  '**/yarn.lock',
-  '**/*.map',
-  '**/dist/**',
-  '**/*.min.js',
-  '**/*.d.ts'
-];
 
 // Keep TonePreset as a type alias for backward compatibility
 export type TonePreset = string;
@@ -405,14 +391,16 @@ export class SessionSummarizer {
   public getLabelData(activity: Activity) {
     const changeSetArtifact = activity.artifacts?.find(a => a.type === 'changeSet');
     if (!changeSetArtifact || !changeSetArtifact.gitPatch) return [];
-    const files = parseDiff(changeSetArtifact.gitPatch.unidiffPatch);
-    return files
-      .filter(f => !micromatch.isMatch(f.to || f.from || '', IGNORE_PATTERNS))
-      .map(file => ({
-        path: file.to || file.from || 'unknown',
-        additions: file.additions,
-        deletions: file.deletions
-      }));
+
+    // Use the central analyzer for parsing and filtering
+    const summary = analyzeChangeSet(changeSetArtifact.gitPatch.unidiffPatch);
+
+    // Map to the simple format expected by the frontend/label-renderer
+    return summary.files.map(f => ({
+      path: f.path,
+      additions: f.additions,
+      deletions: f.deletions
+    }));
   }
 
   private async executeRequest(prompt: string, options?: { attempt?: number; preserveNewlines?: boolean }): Promise<string> {
@@ -471,7 +459,8 @@ export class SessionSummarizer {
     if (changeSet && changeSet.gitPatch) {
       return {
         ...base,
-        context: this.buildSmartContext(changeSet.gitPatch.unidiffPatch),
+        // Use the central analyzer for smart context generation
+        context: analyzeContextForPrompt(changeSet.gitPatch.unidiffPatch),
         commitMessage: changeSet.gitPatch.suggestedCommitMessage
       };
     }
@@ -529,34 +518,5 @@ export class SessionSummarizer {
       }
     }
     return parts.length > 0 ? parts.join('\n---\n') : null;
-  }
-
-  private buildSmartContext(rawDiff: string) {
-    const files = parseDiff(rawDiff);
-    let currentTokenCount = 0;
-    return files.map(file => {
-      const filePath = file.to || file.from || 'unknown';
-      if (micromatch.isMatch(filePath, IGNORE_PATTERNS)) {
-        return { file: filePath, status: 'ignored_artifact', changes: `+${file.additions}/-${file.deletions}` };
-      }
-      const fileDiffString = file.chunks.map(c => c.content).join('\n');
-      const fileTokens = encode(fileDiffString).length;
-
-      if (currentTokenCount + fileTokens > MAX_TOTAL_TOKENS) {
-        return { file: filePath, status: 'truncated_budget_exceeded', summary: `Modified ${file.additions} lines`, affectedMethods: this.extractHunkHeaders(file.chunks) };
-      }
-      if (fileTokens > TOKEN_LIMIT_PER_FILE) {
-        return { file: filePath, status: 'truncated_large_file', summary: `Large refactor (+${file.additions}/-${file.deletions})`, affectedScopes: this.extractHunkHeaders(file.chunks) };
-      }
-      currentTokenCount += fileTokens;
-      return { file: filePath, status: 'included', diff: fileDiffString };
-    });
-  }
-
-  private extractHunkHeaders(chunks: any[]): string[] {
-    return chunks.map(chunk => {
-      const headerMatch = chunk.content.match(/@@.*?@@\s*(.*)/);
-      return headerMatch ? headerMatch[1].trim() : null;
-    }).filter(Boolean).slice(0, 5);
   }
 }

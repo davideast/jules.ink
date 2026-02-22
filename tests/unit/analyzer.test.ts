@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeChangeSet } from '../../src/analyzer.js';
+import { analyzeChangeSet, analyzeContextForPrompt, extractHunkHeaders } from '../../src/analyzer.js';
 
 const MOCK_DIFF = `
 diff --git a/src/api.ts b/src/api.ts
@@ -124,5 +124,64 @@ Binary files /dev/null and b/image.png differ
     const result = analyzeChangeSet('this is not a diff');
     expect(result.totalFiles).toBe(0);
     expect(result.files.length).toBe(0);
+  });
+});
+
+describe('Context Analyzer (for prompts)', () => {
+  it('correctly analyzes a simple file change', () => {
+    const result = analyzeContextForPrompt(MOCK_DIFF);
+    expect(result.length).toBe(1);
+    expect(result[0].file).toBe('src/api.ts');
+    expect(result[0].status).toBe('included');
+    expect(result[0].diff).toContain('const new = 2;');
+  });
+
+  it('ignores files in IGNORE_PATTERNS', () => {
+    const diff = `
+diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,1 @@
+-old
++new
+`;
+    const result = analyzeContextForPrompt(diff);
+    expect(result.length).toBe(1);
+    expect(result[0].file).toBe('package-lock.json');
+    expect(result[0].status).toBe('ignored_artifact');
+    expect(result[0].changes).toBe('+1/-1');
+  });
+
+  it('detects large files (truncated)', () => {
+    // Generate a large diff
+    const largeContent = Array(5000).fill('+line').join('\n');
+    const diff = `
+diff --git a/large-file.ts b/large-file.ts
+index 123..456 100644
+--- a/large-file.ts
++++ b/large-file.ts
+@@ -1,1 +1,5000 @@
+-old
+${largeContent}
+`;
+    const result = analyzeContextForPrompt(diff);
+    expect(result.length).toBe(1);
+    // Depending on token count, it might be truncated_large_file or truncated_budget_exceeded
+    // Given TOKEN_LIMIT_PER_FILE is 2000, 5000 lines should likely exceed it.
+    expect(result[0].status).toMatch(/truncated_/);
+    expect(result[0].file).toBe('large-file.ts');
+  });
+
+    it('extracts hunk headers correctly', () => {
+    const diffChunks = [
+        {
+            content: '@@ -1,5 +1,7 @@ function test() {'
+        },
+        {
+            content: '@@ -10,5 +10,7 @@ class MyClass {'
+        }
+    ];
+    const headers = extractHunkHeaders(diffChunks);
+    expect(headers).toEqual(['function test() {', 'class MyClass {']);
   });
 });
