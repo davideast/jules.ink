@@ -17,7 +17,7 @@ export default defineConfig({
         // Point at the local barrel export, not the stale npm copy.
         // npm can't symlink a package to itself in workspaces, so
         // node_modules/jules-ink is an old published version.
-        'jules-ink': path.resolve(__dirname, '..', 'dist', 'index.js'),
+        'jules-ink': path.resolve(__dirname, '..', 'dist'),
       },
     },
     ssr: {

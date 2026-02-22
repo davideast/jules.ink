@@ -4,16 +4,9 @@
   "private": false,
   "description": "Print physical labels of your AI coding sessions with Jules",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/server.js",
   "bin": {
     "jules-ink": "./dist/cli.js"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
   },
   "files": [
     "dist",
@@ -26,7 +19,7 @@
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build && npm run build:ui",
-    "start": "tsx src/index.ts",
+    "start": "tsx src/server.ts",
     "dev:ui": "npm run dev -w ui",
     "build:ui": "npm run build -w ui",
     "preview:ui": "npm run preview -w ui",

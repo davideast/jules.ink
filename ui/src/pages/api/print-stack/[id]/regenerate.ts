@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SessionSummarizer } from 'jules-ink';
+import { SessionSummarizer } from 'jules-ink/summarizer';
 import { readEnv } from '../../../../lib/api-keys';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

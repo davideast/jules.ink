@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { deleteTone } from 'jules-ink';
+import { deleteTone } from 'jules-ink/tones';
 
 export const DELETE: APIRoute = async ({ params }) => {
   const { name } = params;
