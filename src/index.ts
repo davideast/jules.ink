@@ -9,8 +9,8 @@ export type { SummarizerConfig, TonePreset } from './summarizer.js';
 export { analyzeChangeSet } from './analyzer.js';
 export type { FileImpact, ChangeSetSummary } from './types.js';
 
-export { generateLabel } from './label-generator.js';
-export type { LabelData, FileStat } from './label-generator.js';
+export { generateLabel } from './label/renderer.js';
+export type { LabelData, FileStat } from './label/renderer.js';
 
 export { default as thermal } from './print.js';
 export type { device, config } from './print.js';

@@ -32,8 +32,6 @@ export function truncateMiddle(text: string, maxLength: number): string {
   return text.substring(0, frontChars) + ellipsis + text.substring(text.length - backChars);
 }
 
-// utils.ts
-
 export interface TextSegment {
   text: string;
   isCode: boolean;

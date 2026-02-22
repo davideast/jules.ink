@@ -1,6 +1,6 @@
 import type { Activity } from '@google/jules-sdk';
 import { SessionSummarizer } from './summarizer.js';
-import type { FileStat } from './label-generator.js';
+import type { FileStat } from './label/renderer.js';
 
 // --- Typed events yielded by the generator ---
 

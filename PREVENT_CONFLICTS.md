@@ -47,14 +47,16 @@ While `src/types.ts` exists, many types are defined inline or within specific mo
 *   **Implementation:** Remove `src/index.ts` and refactor all imports to point directly to the source files (e.g., `import { generateLabel } from './label-generator.js'`). This eliminates the central bottleneck.
 
 ### B. Modularize Label Generation
+*   **Status:** Completed on 2026-02-22
 *   **Action:** Refactor `src/label-generator.ts` into a directory `src/label/`.
 *   **Files:**
     *   `src/label/assets.ts`: Font registration and image loading.
     *   `src/label/layout.ts`: `CONFIG` object and layout calculations.
     *   `src/label/text.ts`: Move `calculateWrappedSegments` and related logic here from `src/utils.ts`.
-    *   `src/label/index.ts`: (Optional) Only if needed for a clean public API, but prefer direct imports.
+    *   `src/label/renderer.ts`: Main label generation logic.
 
 ### C. Decouple Server Logic
+*   **Status:** Completed
 *   **Action:** Extract business logic from `src/server.ts`.
 *   **Files:**
     *   `src/services/ai.ts`: encapsulate `GoogleGenAI` interaction.

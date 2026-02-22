@@ -4,7 +4,7 @@
  * The new `streamSession` yields portable typed events without I/O side effects.
  */
 import { SessionSummarizer } from './summarizer.js';
-import { generateLabel, LabelData } from './label-generator.js';
+import { generateLabel, LabelData } from './label/renderer.js';
 import fs from 'fs';
 import path from 'path';
 import thermal, { device } from './print.js';
