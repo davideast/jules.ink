@@ -51,15 +51,15 @@ export async function getTemplate(): Promise<Awaited<ReturnType<typeof loadImage
 
   templatePromise = (async () => {
     const templatePath = path.join(ASSETS_DIR, 'template.png');
-    if (fs.existsSync(templatePath)) {
-      try {
-        return await loadImage(templatePath);
-      } catch (error) {
+    try {
+      await fs.promises.access(templatePath);
+      return await loadImage(templatePath);
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') {
         console.error('Failed to load template image:', error);
-        return null;
       }
+      return null;
     }
-    return null;
   })();
 
   return templatePromise;
