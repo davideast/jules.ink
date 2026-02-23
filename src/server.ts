@@ -4,6 +4,7 @@ import { cors } from 'hono/cors';
 import { fileURLToPath } from 'url';
 import { generateImage } from './services/ai.js';
 import { printImage, watchPrinter } from './services/printer.js';
+import { GenerateRequest } from './api-types.js';
 
 const app = new Hono();
 const port = 3000;
@@ -22,7 +23,7 @@ app.post('/api/generate', async (c) => {
     return c.json({ error: "GEMINI_API_KEY environment variable is required" }, 500);
   }
 
-  const { prompt } = await c.req.json();
+  const { prompt } = await c.req.json<GenerateRequest>();
   if (!prompt) return c.json({ error: 'prompt required' }, 400);
 
   try {
