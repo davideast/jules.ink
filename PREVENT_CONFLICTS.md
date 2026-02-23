@@ -72,6 +72,7 @@ While `src/types.ts` exists, many types are defined inline or within specific mo
     *   `src/summarizer.ts` should import these functions instead of re-implementing them.
 
 ### E. Enforce Explicit Typing
+*   **Status:** Completed on 2026-02-22
 *   **Action:** Create a `src/api-types.ts` (or add to `src/types.ts`).
 *   **Implementation:** Define strict interfaces for all API request bodies (e.g., `GenerateRequest`, `PrintRequest`) and responses. Use these interfaces in `src/server.ts` to type-check `c.req.json()`.
 
