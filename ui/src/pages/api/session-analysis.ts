@@ -24,38 +24,39 @@ const SKILLS_DIR = path.join(ROOT_DIR, '.agents', 'skills');
 const PHASE1_MODEL = 'gemini-2.5-flash';
 const DEFAULT_PHASE2_MODEL = 'gemini-2.5-flash-lite';
 
-function buildPhase1Prompt(stack: PrintStack, sessionPrompt?: string): string {
-  const activityCount = stack.activities.length;
+function calculateDuration(activities: PrintStack['activities']): string {
+  const activityCount = activities.length;
+  if (activityCount < 2) return 'Unknown';
 
-  // Duration
-  let duration = 'Unknown';
-  if (activityCount >= 2) {
-    const first = stack.activities[0].createTime;
-    const last = stack.activities[activityCount - 1].createTime;
-    if (first && last) {
-      const diffMs = new Date(last).getTime() - new Date(first).getTime();
-      const diffMin = Math.round(diffMs / 60000);
-      duration = diffMin > 0 ? `~${diffMin} min` : '<1 min';
-    }
-  }
+  const first = activities[0].createTime;
+  const last = activities[activityCount - 1].createTime;
 
-  // Rank files by churn for selective diff inclusion
+  if (!first || !last) return 'Unknown';
+
+  const diffMs = new Date(last).getTime() - new Date(first).getTime();
+  const diffMin = Math.round(diffMs / 60000);
+  return diffMin > 0 ? `~${diffMin} min` : '<1 min';
+}
+
+function getTopChurnedFiles(activities: PrintStack['activities'], limit = 8): Set<string> {
   const fileChurn = new Map<string, number>();
-  for (const a of stack.activities) {
+  for (const a of activities) {
     for (const f of a.files) {
       fileChurn.set(f.path, (fileChurn.get(f.path) || 0) + f.additions + f.deletions);
     }
   }
-  const topFiles = new Set(
+  return new Set(
     Array.from(fileChurn.entries())
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
+      .slice(0, limit)
       .map(([p]) => p),
   );
+}
 
+function buildActivityTimeline(activities: PrintStack['activities'], topFiles: Set<string>): string {
   let activityTimeline = '';
-  for (let i = 0; i < activityCount; i++) {
-    const a = stack.activities[i];
+  for (let i = 0; i < activities.length; i++) {
+    const a = activities[i];
     const fileList = a.files
       .map(f => `  ${f.path} (+${f.additions}/-${f.deletions})`)
       .join('\n');
@@ -77,6 +78,14 @@ function buildPhase1Prompt(stack: PrintStack, sessionPrompt?: string): string {
     section += '---\n';
     activityTimeline += section;
   }
+  return activityTimeline;
+}
+
+function buildPhase1Prompt(stack: PrintStack, sessionPrompt?: string): string {
+  const activityCount = stack.activities.length;
+  const duration = calculateDuration(stack.activities);
+  const topFiles = getTopChurnedFiles(stack.activities);
+  const activityTimeline = buildActivityTimeline(stack.activities, topFiles);
 
   return `You are a Senior Technical Analyst performing structural analysis of a coding session where an AI agent (Jules) worked on a codebase.
 
