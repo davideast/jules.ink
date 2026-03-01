@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SessionSummarizer } from 'jules-ink/summarizer';
 import { readEnv } from '../../../../lib/api-keys';
+import { isValidStackId } from '../../../../lib/validation';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = process.env.JULES_INK_ROOT || path.resolve(__dirname, '../../../../../../');
@@ -11,6 +12,14 @@ const STACKS_DIR = path.join(ROOT_DIR, '.jules', 'stacks');
 
 export const GET: APIRoute = async ({ params, request }) => {
   const sourceId = params.id!;
+
+  if (!isValidStackId(sourceId)) {
+    return new Response(JSON.stringify({ error: 'invalid id' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   const url = new URL(request.url);
   const tone = url.searchParams.get('tone') || 'noir';
   const model = url.searchParams.get('model') || 'gemini-2.5-flash-lite';
