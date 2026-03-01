@@ -1,29 +1,9 @@
 import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { KeyFileCard } from './KeyFileCard';
-
-function renderTextWithCode(text: string): ReactNode {
-  const parts = text.split(/(`[^`]+`)/g);
-  if (parts.length === 1) return text;
-  return parts.map((part, i) => {
-    if (part.startsWith('`') && part.endsWith('`')) {
-      return (
-        <code key={i} className="bg-[#2a2a35] px-1 py-0.5 rounded text-[12px] font-mono text-[#c0c0d0]">
-          {part.slice(1, -1)}
-        </code>
-      );
-    }
-    return part;
-  });
-}
-
-export interface IntentActivity {
-  index: number;
-  commitMessage?: string;
-  summary: string;
-  activityType: string;
-  createTime?: string;
-}
+import { IntentDetailTimeline } from './IntentDetailTimeline';
+import type { IntentActivity } from './IntentDetailTimeline';
+import { IntentDetailSection } from './IntentDetailSection';
 
 export interface IntentDetailData {
   title: string;
@@ -79,16 +59,10 @@ export function IntentDetailView({ data, onBack, onFileClick }: IntentDetailView
           ) : null}
 
           {/* What Changed */}
-          <div>
-            <h3 className="text-[10px] font-bold tracking-widest text-[#72728a] uppercase mb-2">What Changed</h3>
-            <p className="text-[13px] text-[#b0b0c0] leading-[1.7]">{renderTextWithCode(data.whatChanged)}</p>
-          </div>
+          <IntentDetailSection title="What Changed" content={data.whatChanged} />
 
           {/* Why It Changed */}
-          <div>
-            <h3 className="text-[10px] font-bold tracking-widest text-[#72728a] uppercase mb-2">Why It Changed</h3>
-            <p className="text-[13px] text-[#b0b0c0] leading-[1.7]">{renderTextWithCode(data.whyItChanged)}</p>
-          </div>
+          <IntentDetailSection title="Why It Changed" content={data.whyItChanged} />
 
           {/* Files */}
           {data.files.length > 0 ? (
@@ -110,64 +84,7 @@ export function IntentDetailView({ data, onBack, onFileClick }: IntentDetailView
           ) : null}
 
           {/* Activities — readable step timeline */}
-          {data.activities.length > 0 ? (() => {
-            const firstTime = data.activities[0]?.createTime
-              ? new Date(data.activities[0].createTime).getTime()
-              : null;
-
-            return (
-              <div>
-                <h3 className="text-[10px] font-bold tracking-widest text-[#72728a] uppercase mb-3">Steps</h3>
-                <div className="flex flex-col">
-                  {data.activities.map((a, i) => {
-                    const isLast = i === data.activities.length - 1;
-                    // Humanize activityType: "planGenerated" → "Plan Generated"
-                    const humanType = a.activityType
-                      .replace(/([A-Z])/g, ' $1')
-                      .replace(/^./, c => c.toUpperCase())
-                      .trim();
-                    // Relative time from first activity
-                    let relTime = '';
-                    if (firstTime && a.createTime) {
-                      const diffMin = Math.round(
-                        (new Date(a.createTime).getTime() - firstTime) / 60000,
-                      );
-                      relTime = diffMin === 0 ? 'start' : `+${diffMin}m`;
-                    }
-
-                    return (
-                      <div key={a.index} className="flex gap-3">
-                        {/* Timeline connector */}
-                        <div className="flex flex-col items-center shrink-0 w-5">
-                          <div className="w-2 h-2 rounded-full bg-[#3f3f4e] mt-1.5 shrink-0" />
-                          {!isLast ? (
-                            <div className="w-px flex-1 bg-[#2a2a35] my-1" />
-                          ) : null}
-                        </div>
-                        {/* Content */}
-                        <div className={`min-w-0 pb-${isLast ? '0' : '5'}`}>
-                          <div className="flex items-baseline gap-2 mb-1">
-                            <span className="text-[12px] text-[#e4e4e7] font-medium">
-                              {a.commitMessage || humanType}
-                            </span>
-                            {relTime ? (
-                              <span className="text-[10px] text-[#52526a] font-mono shrink-0">{relTime}</span>
-                            ) : null}
-                          </div>
-                          {a.commitMessage ? (
-                            <span className="text-[10px] text-[#52526a] uppercase tracking-wider">{humanType}</span>
-                          ) : null}
-                          <p className="text-[12px] text-[#8e8ea0] leading-[1.6] mt-1">
-                            {renderTextWithCode(a.summary)}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })() : null}
+          <IntentDetailTimeline activities={data.activities} />
         </div>
       </div>
     </div>
