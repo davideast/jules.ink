@@ -32,7 +32,7 @@ Usage: jules-ink print [options]
 
 Options:
   -s, --session <id>    Session ID to process (required)
-  -m, --model <name>    Gemini model (default: "gemini-2.5-flash-lite")
+  -m, --model <name>    Gemini model (default: "gemini-3.1-flash-lite-preview")
   -t, --tone <preset>   Tone for summaries (default: "professional")
   -p, --printer <name>  Printer name (auto-discovers if not set)
   -h, --help            Display help

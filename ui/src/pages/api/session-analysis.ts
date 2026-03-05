@@ -22,7 +22,7 @@ const STACKS_DIR = path.join(ROOT_DIR, '.jules', 'stacks');
 const SKILLS_DIR = path.join(ROOT_DIR, '.agents', 'skills');
 
 const PHASE1_MODEL = 'gemini-2.5-flash';
-const DEFAULT_PHASE2_MODEL = 'gemini-2.5-flash-lite';
+const DEFAULT_PHASE2_MODEL = 'gemini-3.1-flash-lite-preview';
 
 function calculateDuration(activities: PrintStack['activities']): string {
   const activityCount = activities.length;

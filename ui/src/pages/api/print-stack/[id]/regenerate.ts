@@ -13,7 +13,7 @@ export const GET: APIRoute = async ({ params, request }) => {
   const sourceId = params.id!;
   const url = new URL(request.url);
   const tone = url.searchParams.get('tone') || 'noir';
-  const model = url.searchParams.get('model') || 'gemini-2.5-flash-lite';
+  const model = url.searchParams.get('model') || 'gemini-3.1-flash-lite-preview';
 
   // Load source stack
   const filepath = path.join(STACKS_DIR, `${sourceId}.json`);

@@ -8,10 +8,10 @@ export interface ModelOption {
 }
 
 export const MODELS: ModelOption[] = [
-  { id: 'gemini-2.5-flash-lite', name: '2.5 Flash Lite', icon: 'speed', descriptor: 'Fast' },
+  { id: 'gemini-3.1-flash-lite-preview', name: '3.1 Flash Lite', icon: 'speed', descriptor: 'Fast' },
   { id: 'gemini-2.5-flash', name: '2.5 Flash', icon: 'bolt', descriptor: 'Balanced' },
-  { id: 'gemini-3-flash-preview', name: '3.0 Flash', icon: 'bolt', descriptor: 'Next Gen' },
-  { id: 'gemini-3-pro-preview', name: '3.0 Pro', icon: 'psychology', descriptor: 'Quality' },
+  { id: 'gemini-3.1-flash-preview', name: '3.1 Flash', icon: 'bolt', descriptor: 'Next Gen' },
+  { id: 'gemini-3.1-pro-preview', name: '3.1 Pro', icon: 'psychology', descriptor: 'Quality' },
 ];
 
 export interface ModelSelectorProps {

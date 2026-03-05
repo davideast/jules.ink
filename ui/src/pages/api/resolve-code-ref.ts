@@ -11,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = process.env.JULES_INK_ROOT || path.resolve(__dirname, '../../../../');
 const STACKS_DIR = path.join(ROOT_DIR, '.jules', 'stacks');
 
-const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
+const DEFAULT_MODEL = 'gemini-3.1-flash-lite-preview';
 
 /** Extracts the raw diff text for a single file from a multi-file unidiff patch. */
 function extractRawFileDiff(unidiffPatch: string, filePath: string): string {
