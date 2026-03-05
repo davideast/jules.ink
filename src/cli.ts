@@ -17,7 +17,7 @@ program
   .command('print')
   .description('Print labels for a Jules session')
   .requiredOption('-s, --session <id>', 'The Session ID to process')
-  .option('-m, --model <name>', 'Gemini model to use for summarization', 'gemini-2.5-flash-lite')
+  .option('-m, --model <name>', 'Gemini model to use for summarization', 'gemini-3.1-flash-lite-preview')
   .option('-t, --tone <preset>', 'Tone preset for summaries (professional, pirate, shakespearean, excited, haiku, noir)', 'professional')
   .option('-p, --printer <name>', 'Printer name (auto-discovers if not set)')
   .option('-o, --output <path>', 'Output directory for labels')

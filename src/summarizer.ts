@@ -14,7 +14,7 @@ import { loadSkillRules } from './skill-loader.js';
 import { analyzeContextForPrompt, analyzeChangeSet } from './analyzer.js';
 
 // --- Configuration Constants ---
-const CLOUD_MODEL_NAME = 'gemini-2.5-flash-lite';
+const CLOUD_MODEL_NAME = 'gemini-3.1-flash-lite-preview';
 const LOCAL_MODEL_DEFAULT = 'gemma3:4b';
 
 // Keep TonePreset as a type alias for backward compatibility

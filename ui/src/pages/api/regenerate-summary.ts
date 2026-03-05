@@ -37,7 +37,7 @@ export const POST: APIRoute = async ({ request }) => {
     const summarizer = new SessionSummarizer({
       backend: 'cloud',
       apiKey,
-      cloudModelName: body.model || 'gemini-2.5-flash-lite',
+      cloudModelName: body.model || 'gemini-3.1-flash-lite-preview',
       personaId: persona?.id,
       tone: persona ? undefined : body.tone,
       skillsDir,

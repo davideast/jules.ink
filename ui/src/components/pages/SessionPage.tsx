@@ -91,7 +91,7 @@ export function SessionPage({
   const [toneModalOpen, setToneModalOpen] = useState(false);
   const [printerDropdownOpen, setPrinterDropdownOpen] = useState(false);
   const [activeLabelIndex, setActiveLabelIndex] = useState(0);
-  const [selectedModel, setSelectedModel] = useState(initialModel || 'gemini-2.5-flash-lite');
+  const [selectedModel, setSelectedModel] = useState(initialModel || 'gemini-3.1-flash-lite-preview');
   const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
   const [currentStackId, setCurrentStackId] = useState<string | null>(null);
   const [diffFilePath, setDiffFilePath] = useState<string | null>(null);
@@ -176,7 +176,7 @@ export function SessionPage({
         if (stack.analysis?.structural) {
           const cachedTone = stack.tone || initialTone || 'React Perf Expert';
           const firstModel = stack.activities[0]?.model;
-          const cachedModel = firstModel || initialModel || 'gemini-2.5-flash-lite';
+          const cachedModel = firstModel || initialModel || 'gemini-3.1-flash-lite-preview';
           const vKey = versionKey(cachedTone, cachedModel);
           let cachedInterp = stack.analysis.interpretive?.[vKey];
 
