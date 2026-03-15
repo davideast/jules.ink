@@ -6,6 +6,7 @@ import { GoogleGenAI } from '@google/genai';
 import { resolvePersonaByName } from 'jules-ink/expert-personas';
 import { loadSkillRules } from 'jules-ink/skill-loader';
 import { readEnv } from '../../lib/api-keys';
+import { isValidStackId } from '../../lib/validation';
 import { versionKey } from '../../lib/print-stack';
 import type { PrintStack } from '../../lib/print-stack';
 import type {
@@ -260,6 +261,13 @@ export const POST: APIRoute = async ({ request }) => {
   if (!body.sessionId || !body.stackId || !body.tone) {
     return new Response(
       JSON.stringify({ error: 'sessionId, stackId, and tone are required' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  if (!isValidStackId(body.stackId)) {
+    return new Response(
+      JSON.stringify({ error: 'Invalid stackId' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
     );
   }
