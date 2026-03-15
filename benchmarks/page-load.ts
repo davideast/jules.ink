@@ -93,10 +93,21 @@ async function resolveSessionId(): Promise<string> {
 
   const stacksDir = path.join(process.cwd(), '.jules', 'stacks');
   try {
-    const files = fs.readdirSync(stacksDir).filter(f => f.endsWith('.json'));
+    const files = (await fs.promises.readdir(stacksDir)).filter(f => f.endsWith('.json'));
+    const stacks = await Promise.all(
+      files.map(async f => {
+        try {
+          const content = await fs.promises.readFile(path.join(stacksDir, f), 'utf-8');
+          return JSON.parse(content);
+        } catch {
+          return null;
+        }
+      }),
+    );
+
     let best: { id: string; count: number } = { id: '', count: 0 };
-    for (const f of files) {
-      const stack = JSON.parse(fs.readFileSync(path.join(stacksDir, f), 'utf-8'));
+    for (const stack of stacks) {
+      if (!stack) continue;
       const count = stack.activities?.length ?? 0;
       if (count > best.count) {
         best = { id: stack.sessionId, count };
