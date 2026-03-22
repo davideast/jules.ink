@@ -12,17 +12,20 @@ export const GET: APIRoute = async ({ url }) => {
   try {
     await fs.mkdir(STACKS_DIR, { recursive: true });
     const files = await fs.readdir(STACKS_DIR);
-    const stacks = [];
-    for (const file of files) {
-      if (file.endsWith('.json')) {
-        try {
-          const content = await fs.readFile(path.join(STACKS_DIR, file), 'utf-8');
-          stacks.push(JSON.parse(content));
-        } catch (e) {
-          console.warn(`skipping invalid stack file: ${file}`, e);
-        }
+
+    const jsonFiles = files.filter(f => f.endsWith('.json'));
+    const stacksPromises = jsonFiles.map(async (file) => {
+      try {
+        const content = await fs.readFile(path.join(STACKS_DIR, file), 'utf-8');
+        return JSON.parse(content);
+      } catch (e) {
+        console.warn(`skipping invalid stack file: ${file}`, e);
+        return null;
       }
-    }
+    });
+
+    const parsedStacks = await Promise.all(stacksPromises);
+    const stacks = parsedStacks.filter(s => s !== null);
 
     // Filter by sessionId
     const filterSessionId = url.searchParams.get('sessionId');
