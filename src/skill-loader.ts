@@ -66,13 +66,12 @@ export async function loadSkillRules(
   }
 
   const mdFiles = entries.filter(f => f.endsWith('.md'));
-  const rules: SkillRule[] = [];
 
-  for (const file of mdFiles) {
+  const rulesPromises = mdFiles.map(async (file) => {
     try {
       const raw = await fs.readFile(path.join(rulesDir, file), 'utf-8');
       const fm = parseFrontmatter(raw);
-      if (!fm?.title || !fm?.impact) continue;
+      if (!fm?.title || !fm?.impact) return null;
 
       const tags = (fm.tags || '')
         .split(',')
@@ -82,20 +81,24 @@ export async function loadSkillRules(
       // Filter by tags if specified
       if (opts.tags && opts.tags.length > 0) {
         const hasMatch = opts.tags.some(t => tags.includes(t.toLowerCase()));
-        if (!hasMatch) continue;
+        if (!hasMatch) return null;
       }
 
-      rules.push({
+      return {
         title: fm.title,
         impact: fm.impact,
         impactDescription: fm.impactDescription || '',
         tags,
         explanation: extractFirstSentence(raw),
-      });
+      } as SkillRule;
     } catch {
       // Skip unreadable files
+      return null;
     }
-  }
+  });
+
+  const resolvedRules = await Promise.all(rulesPromises);
+  const rules = resolvedRules.filter((r): r is SkillRule => r !== null);
 
   // Sort by impact priority
   rules.sort((a, b) => {
