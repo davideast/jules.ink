@@ -437,7 +437,7 @@ export class SessionSummarizer {
 
         if (this.backend === 'cloud' && isRetryable && attempt < 5) {
           const backoffMs = Math.min(2000 * Math.pow(2, attempt - 1), 60000);
-          console.log(`[Summarizer] Retrying in ${backoffMs / 1000}s (attempt ${attempt}/5)...`);
+          console.warn(`[Summarizer] Retrying in ${backoffMs / 1000}s (attempt ${attempt}/5)...`);
           await new Promise(r => setTimeout(r, backoffMs));
           return this.executeRequest(prompt, { attempt: attempt + 1, preserveNewlines: keepNewlines });
         }
