@@ -10,11 +10,25 @@ const app = new Hono();
 const port = 3000;
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(o => {
+      if (o === '*') return true;
+      try {
+        new URL(o);
+        return true;
+      } catch {
+        console.warn(`Invalid origin ignored: ${o}`);
+        return false;
+      }
+    }).map(o => o === '*' ? '*' : new URL(o).origin)
   : ['http://localhost:4321', 'http://localhost:3000'];
 
 app.use('/*', cors({
-  origin: allowedOrigins,
+  origin: (origin) => {
+    if (!origin) return null;
+    if (allowedOrigins.includes('*')) return '*';
+    if (allowedOrigins.includes(origin)) return origin;
+    return null;
+  },
 }));
 
 app.post('/api/generate', async (c) => {
