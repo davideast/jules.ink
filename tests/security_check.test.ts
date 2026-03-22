@@ -3,6 +3,26 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 // Mock fs BEFORE importing the module under test
+vi.mock('@google/genai', () => ({
+  GoogleGenAI: class {
+    models = { generateContent: vi.fn() };
+  }
+}));
+
+vi.mock('jules-ink/expert-personas', () => ({
+  resolvePersonaByName: vi.fn()
+}));
+
+vi.mock('jules-ink/skill-loader', () => ({
+  loadSkillRules: vi.fn()
+}));
+
+vi.mock('jules-ink/summarizer', () => ({
+  SessionSummarizer: class {
+    styleTransfer = vi.fn();
+  }
+}));
+
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -23,6 +43,9 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 import { GET as GET_ID } from '../ui/src/pages/api/print-stack/[id]/index.ts';
 import { POST as POST_STACK } from '../ui/src/pages/api/print-stack/index.ts';
+import { POST as POST_SESSION_ANALYSIS } from '../ui/src/pages/api/session-analysis.ts';
+import { POST as POST_RESOLVE_CODE_REF } from '../ui/src/pages/api/resolve-code-ref.ts';
+import { GET as GET_REGENERATE } from '../ui/src/pages/api/print-stack/[id]/regenerate.ts';
 
 describe('Vulnerability Check', () => {
   beforeEach(() => {
@@ -103,5 +126,72 @@ describe('Vulnerability Check', () => {
         const calledPath = writeFileMock.mock.calls[0][0] as string;
         expect(calledPath).toContain('valid-stack_123.json');
       });
+
+      it('should block non-string stack ID bypass in POST', async () => {
+        // Attempt to pass an array to bypass regex validation if not correctly typed
+        const maliciousStack = { id: ['valid-stack_123'], foo: 'bar' };
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            body: JSON.stringify(maliciousStack)
+        });
+
+        const response = await POST_STACK({ request } as any);
+        expect(response.status).toBe(400);
+
+        const body = await response.json();
+        expect(body.error).toBe('invalid stack id');
+      });
+  });
+
+  describe('POST /api/session-analysis', () => {
+    it('should block path traversal via stackId', async () => {
+      const maliciousPayload = {
+        sessionId: 'test-session',
+        tone: 'noir',
+        stackId: '../../../../etc/passwd'
+      };
+      const request = new Request('http://localhost', {
+        method: 'POST',
+        body: JSON.stringify(maliciousPayload)
+      });
+      const response = await POST_SESSION_ANALYSIS({ request } as any);
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('invalid stackId');
+    });
+  });
+
+  describe('POST /api/resolve-code-ref', () => {
+    it('should block path traversal via stackId', async () => {
+      const maliciousPayload = {
+        stackId: '../../../../etc/passwd',
+        filePath: 'test.ts',
+        findingText: 'foo',
+        sectionKey: 'bar',
+        index: 0
+      };
+      const request = new Request('http://localhost', {
+        method: 'POST',
+        body: JSON.stringify(maliciousPayload)
+      });
+      const response = await POST_RESOLVE_CODE_REF({ request } as any);
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('invalid stackId');
+    });
+  });
+
+  describe('GET /api/print-stack/[id]/regenerate', () => {
+    it('should prevent path traversal via id parameter', async () => {
+      const maliciousId = '../../../../etc/passwd';
+      const context = {
+        params: { id: maliciousId },
+        request: new Request('http://localhost?tone=noir'),
+      };
+      const response = await GET_REGENERATE(context as any);
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('invalid id');
+    });
   });
 });

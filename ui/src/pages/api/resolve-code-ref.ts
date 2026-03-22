@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoogleGenAI } from '@google/genai';
 import { readEnv } from '../../lib/api-keys';
+import { isValidStackId } from '../../lib/validation';
 import type { PrintStack } from '../../lib/print-stack';
 import type { CodeRef } from '../../lib/session-analysis';
 
@@ -34,6 +35,13 @@ export const POST: APIRoute = async ({ request }) => {
   if (!stackId || !filePath || !findingText || !sectionKey || index === undefined) {
     return new Response(
       JSON.stringify({ error: 'stackId, filePath, findingText, sectionKey, and index are required' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  if (!isValidStackId(stackId)) {
+    return new Response(
+      JSON.stringify({ error: 'invalid stackId' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
     );
   }
