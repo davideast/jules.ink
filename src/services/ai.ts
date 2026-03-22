@@ -4,7 +4,6 @@ const model = "imagen-4.0-generate-001";
 
 export async function generateImage(prompt: string, apiKey: string): Promise<Buffer> {
   const ai = new GoogleGenAI({ apiKey });
-  console.log(`🎨 dreaming: "${prompt}"`);
 
   const res = await ai.models.generateImages({
     model,
