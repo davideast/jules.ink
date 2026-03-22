@@ -108,7 +108,23 @@ function drawBodyAnchored(ctx: CanvasRenderingContext2D, text: string, fixedY: n
     }
   } while (fontSize >= minFontSize);
 
-  // (Truncation logic omitted for brevity, but would need updating for segments)
+  // 2.5. Truncation Logic
+  if (totalTextHeight > maxHeight) {
+    const maxLines = Math.max(1, Math.floor(maxHeight / lineHeight));
+    wrappedLines = wrappedLines.slice(0, maxLines);
+
+    if (wrappedLines.length > 0) {
+      const lastLine = wrappedLines[wrappedLines.length - 1];
+      if (lastLine.length > 0) {
+        const lastSegment = lastLine[lastLine.length - 1];
+        if (lastSegment.text.length > 3) {
+          lastSegment.text = lastSegment.text.slice(0, -3) + '...';
+        } else {
+          lastSegment.text = '...';
+        }
+      }
+    }
+  }
 
   // 3. Drawing Phase
   ctx.textAlign = 'left';
