@@ -108,9 +108,38 @@ function drawBodyAnchored(ctx: CanvasRenderingContext2D, text: string, fixedY: n
     }
   } while (fontSize >= minFontSize);
 
-  // (Truncation logic omitted for brevity, but would need updating for segments)
+  // 3. Truncation Phase
+  if (totalTextHeight > maxHeight) {
+    const maxAllowedLines = Math.floor(maxHeight / lineHeight);
+    if (maxAllowedLines > 0 && wrappedLines.length > maxAllowedLines) {
+      wrappedLines = wrappedLines.slice(0, maxAllowedLines);
+      const lastLine = wrappedLines[wrappedLines.length - 1];
 
-  // 3. Drawing Phase
+      if (lastLine && lastLine.length > 0) {
+        const lastSegment = lastLine[lastLine.length - 1];
+        lastSegment.text += '...';
+
+        ctx.font = lastSegment.isCode ? codeFontStr : normalFontStr;
+        const padding = lastSegment.isCode ? 8 : 0;
+
+        let textToTest = lastSegment.text;
+        while (textToTest.length > 3) {
+          const w = ctx.measureText(textToTest).width + padding;
+          const currentLineWidth = lastLine.slice(0, -1).reduce((sum, seg) => sum + (seg.width || 0), 0) + w;
+          if (currentLineWidth <= maxWidth) {
+            break;
+          }
+          textToTest = textToTest.slice(0, -4) + '...';
+        }
+        lastSegment.text = textToTest;
+        lastSegment.width = ctx.measureText(textToTest).width + padding;
+      }
+    } else if (maxAllowedLines === 0) {
+      wrappedLines = [];
+    }
+  }
+
+  // 4. Drawing Phase
   ctx.textAlign = 'left';
   ctx.fillStyle = 'black';
 
