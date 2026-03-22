@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { readEnv, writeEnv, checkKeysConfigured } from '../../lib/api-keys';
+import { SESSION_AUTH_TOKEN } from '../../lib/auth-token';
 
 /** GET — return key status */
 export const GET: APIRoute = async () => {
@@ -11,7 +12,7 @@ export const GET: APIRoute = async () => {
 };
 
 /** POST — save keys to .env and update process.env */
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, cookies }) => {
   try {
     const body = await request.json();
     const { geminiKey, julesKey } = body as {
@@ -34,6 +35,15 @@ export const POST: APIRoute = async ({ request }) => {
     // Update process.env so the running server picks up the new keys
     process.env.GEMINI_API_KEY = geminiKey.trim();
     process.env.JULES_API_KEY = julesKey.trim();
+
+    // Set an authentication cookie so the current session can modify keys later
+    cookies.set('auth_token', SESSION_AUTH_TOKEN, {
+      path: '/',
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 365, // 1 year
+    });
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },
