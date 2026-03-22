@@ -63,17 +63,19 @@ export const GET: APIRoute = async ({ params, request }) => {
 
       try {
         const activities = sourceStack.activities || [];
-        for (const activity of activities) {
-          const newSummary = await summarizer.styleTransfer(
-            activity.summary,
-            activity.activityType,
-          );
-          send('activity:regenerated', {
-            index: activity.index,
-            activityId: activity.activityId,
-            summary: newSummary,
-          });
-        }
+        await Promise.all(
+          activities.map(async (activity) => {
+            const newSummary = await summarizer.styleTransfer(
+              activity.summary,
+              activity.activityType,
+            );
+            send('activity:regenerated', {
+              index: activity.index,
+              activityId: activity.activityId,
+              summary: newSummary,
+            });
+          })
+        );
         send('regeneration:complete', { totalActivities: activities.length });
       } catch (err: any) {
         send('regeneration:error', { error: err.message || 'Regeneration failed' });
