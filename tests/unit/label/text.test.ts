@@ -1,5 +1,50 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseMarkdownSegments, calculateWrappedLines } from '../../../src/label/text.js';
+import { parseMarkdownSegments, calculateWrappedLines, truncateMiddle } from '../../../src/label/text.js';
+
+describe('truncateMiddle', () => {
+  it('should return original text if shorter than maxLength', () => {
+    expect(truncateMiddle('hello', 10)).toBe('hello');
+  });
+
+  it('should return original text if equal to maxLength', () => {
+    expect(truncateMiddle('hello', 5)).toBe('hello');
+  });
+
+  it('should truncate text and insert ellipsis for even charsToShow', () => {
+    // length = 10, maxLength = 7
+    // ellipsis = '...', charsToShow = 4
+    // frontChars = 2, backChars = 2
+    expect(truncateMiddle('abcdefghij', 7)).toBe('ab...ij');
+  });
+
+  it('should truncate text and insert ellipsis for odd charsToShow', () => {
+    // length = 10, maxLength = 8
+    // ellipsis = '...', charsToShow = 5
+    // frontChars = 3, backChars = 2
+    expect(truncateMiddle('abcdefghij', 8)).toBe('abc...ij');
+  });
+
+  it('should handle empty string correctly', () => {
+    expect(truncateMiddle('', 5)).toBe('');
+  });
+
+  it('should handle maxLength less than ellipsis length', () => {
+    // current implementation: charsToShow = -1 (for maxLength = 2)
+    // frontChars = 0, backChars = -1
+    // text.substring(0, 0) + '...' + text.substring(text.length + 1)
+    // evaluates to '' + '...' + '' = '...'
+    expect(truncateMiddle('hello', 2)).toBe('...');
+    expect(truncateMiddle('hello', 0)).toBe('...');
+  });
+
+  it('should handle exactly one character removal (maxLength = text.length - 1)', () => {
+    // length = 6, maxLength = 5
+    // ellipsis = '...', charsToShow = 2
+    // frontChars = 1, backChars = 1
+    // 'a...f' (length 5)
+    expect(truncateMiddle('abcdef', 5)).toBe('a...f');
+  });
+});
 
 describe('parseMarkdownSegments', () => {
   it('should handle plain text without backticks', () => {
